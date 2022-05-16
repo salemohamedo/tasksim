@@ -62,7 +62,6 @@ def train(model, train_loader, optim: torch.optim.Optimizer, criterion : torch.n
         optim.step()
     return
 
-
 def evaluate(model, test_loader, criterion):
     model.eval()
     total_loss = 0
