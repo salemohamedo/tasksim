@@ -20,7 +20,7 @@ parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
 
 args = parser.parse_args()
 
-NUM_LABELS = 100
+# NUM_LABELS = 100
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -33,48 +33,53 @@ transform = transforms.Compose([
     
 
 ## Load data
-train_data = datasets.CIFAR100(
+train_data = datasets.CIFAR10(
     root='./data', train=True, transform=transform, download=True)
-test_data = datasets.CIFAR100(
+test_data = datasets.CIFAR10(
     root='./data', train=False, transform=transform, download=True)
 
-train_data.data = train_data.data[:args.batch_size]
-# test_data.data = test_data.data[:args.test_batch_size]
+NUM_LABELS = len(train_data.classes)
+# train_data.data = train_data.data[:args.batch_size*2]
+# test_data.data = test_data.data[:args.test_batch_size*2]
 
 train_loader = DataLoader(
     train_data, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True
 )
 test_loader = DataLoader(
-    test_data, batch_size=args.test_batch_size, shuffle=False, num_workers=2
+    test_data, batch_size=args.test_batch_size, shuffle=False, num_workers=2, pin_memory=True
 )
+
 # inputs, labels = next(iter(train_loader))
 # inputs, labels = inputs.to(device), labels.to(device)
 
 ## Configure model
 model = models.resnet34(pretrained=True)
-for param in model.parameters():
-    param.requires_grad = False
+# for param in model.parameters():
+#     param.requires_grad = False
 fc_features = model.fc.in_features
 model.fc = torch.nn.Linear(fc_features, NUM_LABELS)
 model.to(device)
 
 ## Configure loss, optimizer, lr scheduler
 criterion = torch.nn.CrossEntropyLoss()
-optim = torch.optim.SGD(model.fc.parameters(), lr=args.lr, momentum=0.9)
-# optim = torch.optim.Adam(model.fc.parameters(), lr=3e-4)
-# Decay LR by a factor of 0.1 every 7 epochs
-lr_scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=7, gamma=0.1)
+# optim = torch.optim.SGD(model.fc.parameters(), lr=args.lr, momentum=0.9)
+# optim = torch.optim.Adam(model.parameters(), lr=3e-4)
+# # Decay LR by a factor of 0.1 every 7 epochs
+# lr_scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=7, gamma=0.1)
+
+optim = torch.optim.SGD(model.parameters(), lr=args.lr,
+                      momentum=0.9, weight_decay=5e-4)
+# lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.num_epochs)
+
 # xs, ys = None, None
 def train(model, train_loader, optim: torch.optim.Optimizer, criterion : torch.nn.CrossEntropyLoss):
     model.train()
     for inputs, labels in train_loader:
-    # for i in range(1):
-        print(i)
         inputs, labels = inputs.to(device), labels.to(device)
         optim.zero_grad()
         outs = model(inputs)
         loss = criterion(outs, labels)
-        print(loss)
+        # print(loss)
         loss.backward()
         optim.step()
     return
@@ -95,7 +100,7 @@ def evaluate(model, test_loader, criterion):
 start = time.time()
 for i in range(args.num_epochs):
     train(model, train_loader, optim, criterion)
-    # loss, acc = evaluate(model, train_loader, criterion)
-    # print(f"Epoch: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {lr_scheduler.get_last_lr()}")
+    loss, acc = evaluate(model, test_loader, criterion)
+    print(f"Epoch: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
     # lr_scheduler.step()
 print(time.time()-start)
