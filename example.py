@@ -4,9 +4,22 @@ import argparse
 from torchvision import models, transforms, datasets
 from torch.utils.data import DataLoader
 import torch
+import numpy, random
 from tqdm import tqdm
 
+very_start = time.time()
+
 torch.manual_seed(0)
+
+
+def seed_worker(worker_id):
+    # worker_seed = torch.initial_seed() % 2**32
+    numpy.random.seed(0)
+    random.seed(0)
+
+
+g = torch.Generator()
+g.manual_seed(0)
 
 parser = argparse.ArgumentParser(description='Tasksim Example')
 parser.add_argument('--batch-size', type=int, default=64, metavar='N',
@@ -43,10 +56,12 @@ NUM_LABELS = len(train_data.classes)
 # test_data.data = test_data.data[:args.test_batch_size*2]
 
 train_loader = DataLoader(
-    train_data, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True
+    train_data, batch_size=args.batch_size, shuffle=False, num_workers=0, pin_memory=True, worker_init_fn=seed_worker,
+    generator=g
 )
 test_loader = DataLoader(
-    test_data, batch_size=args.test_batch_size, shuffle=False, num_workers=2, pin_memory=True
+    test_data, batch_size=args.test_batch_size, shuffle=False, num_workers=0, pin_memory=True, worker_init_fn=seed_worker,
+    generator=g
 )
 
 # inputs, labels = next(iter(train_loader))
@@ -103,4 +118,5 @@ for i in range(args.num_epochs):
     loss, acc = evaluate(model, test_loader, criterion)
     print(f"Epoch: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
     # lr_scheduler.step()
-print(time.time()-start)
+print(f"Train time: {time.time()-start}")
+print(f"Whole script time: {time.time()-very_start}")
