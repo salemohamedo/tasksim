@@ -9,6 +9,12 @@ import torch
 import numpy, random
 from tqdm import tqdm
 
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+RESULTS_PATH = './results'
+
 import wandb
 
 # wandb.init(project="tasksim", entity="omar-s")
@@ -37,6 +43,8 @@ parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                     help='learning rate (default: 0.01)')
 parser.add_argument('--freeze-features', action='store_true',
                     help='Only train classifier head')
+parser.add_argument('--save-results', action='store_true',
+                    help='Save run results to ./results dir')
 parser.add_argument('--increment', type=int, default=10, metavar='N')
 
 args = parser.parse_args()
@@ -66,8 +74,8 @@ class WeightNorm_Classifier(torch.nn.Module):
         # super().__init__(*args, **kwargs)
 
     def forward(self, x, *args, **kwargs):
-        # return torch.nn.functional.linear(x, self.weight / torch.norm(self.weight, dim=1, keepdim=True), self.bias)
-        return torch.nn.functional.linear(x, self.weight, self.bias)
+        return torch.nn.functional.linear(x, self.weight / torch.norm(self.weight, dim=1, keepdim=True), self.bias)
+        # return torch.nn.functional.linear(x, self.weight, self.bias)
 
 ## Configure model
 class PretrainedModel(torch.nn.Module):
@@ -113,14 +121,21 @@ class PretrainedModel(torch.nn.Module):
         outs = torch.mul(outs, full_mask)
         return outs
 
+def save_results(results):
+    results_dir = Path(RESULTS_PATH)
+
+    if not results_dir.exists():
+        results_dir.mkdir()
+
+    id_list = [int(str(x).split("_")[-1]) for x in results_dir.iterdir()]
+    run_id = 0 if not id_list else max(id_list) + 1
+    df = pd.DataFrame(results)
+    df.to_csv(RESULTS_PATH + f'/run_{run_id}')
 
 def train(model, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn.CrossEntropyLoss, prev_test_loaders):
     model.train()
     total_loss = 0
     for inputs, labels, task_ids in train_loader:
-        # if len(prev_test_loaders) > 0:
-        #     loss, acc = evaluate(model, prev_test_loaders[0], criterion)
-        #     print(f"##Task: 0\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
         inputs, labels = inputs.to(device), labels.to(device)
         optim.zero_grad()
         outs = model(inputs, labels)
@@ -181,8 +196,10 @@ criterion = torch.nn.CrossEntropyLoss()
 
 start_train_time = time.time()
 prev_test_loaders = []
+results = np.zeros((train_scenario.nb_tasks, train_scenario.nb_tasks))
 for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test_scenario)):
     print(f"\n######\t Training on task {task_id}\t ######\n")
+
     ## Load data
     train_taskset, val_taskset = split_train_val(train_taskset, val_split=0.1)
     train_loader = torch.utils.data.DataLoader(
@@ -194,31 +211,29 @@ for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test
     train_ys = set(train_taskset._y)
     test_ys = set(test_taskset._y)
     assert train_ys == test_ys
-    # print(f"Labels for task {task_id}: {train_ys}")
+
     ## Update model, optimizer
     model.extend_head(train_taskset.nb_classes)
     optim_params = model.encoder.fc.parameters() if args.freeze_features else model.encoder.parameters()
-    lr = args.lr
-    # if task_id > 0:
-    #     lr = 0.0001
-    optim = torch.optim.SGD(optim_params, lr=lr,
+    optim = torch.optim.SGD(optim_params, lr=args.lr,
                             momentum=0.9, weight_decay=5e-4)
-    # Decay LR by a factor of 0.1 every 7 epochs
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=7, gamma=0.1)
-    print(f"Model head size: {model.head_size}")
-    # if task_id == 0:
+
+    ## Train and evaluate test accuracy on current task
     run_train_loop(model, train_loader, test_loader, optim, lr_scheduler, criterion, args.num_epochs, prev_test_loaders)
-    # model.restore_head_weights()
     loss, acc = evaluate(model, test_loader, criterion)
     print(f"Task: {task_id}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
+
+    ## Eval test accuracy on previous tasks
     if len(prev_test_loaders) > 0:
         print(f"\n## Testing Previous Task Accuracies ##\n")
         for i, tl in enumerate(prev_test_loaders):
             loss, acc = evaluate(model, tl, criterion)
             print(f"Task: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
-            # print(f"Labels for task {i}: {set(tl.dataset._y)}")
     prev_test_loaders.append(test_loader)
 
+if args.save_results:
+    save_results(results)
 
 print(f"\n\nTrain time: {time.time()-start_train_time:.2f}s")
 print(f"Total run time: {time.time()-very_start:.2f}s")
