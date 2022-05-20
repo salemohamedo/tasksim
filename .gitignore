@@ -160,7 +160,6 @@ cython_debug/
 .idea/
 
 ## tasksim ignores
-
 data/
 .vscode
 wandb/

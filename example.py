@@ -31,8 +31,8 @@ parser.add_argument('--num-epochs', type=int, default=1000, metavar='N',
                     help='number of epochs to train (default: 64)')
 parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                     help='learning rate (default: 0.01)')
-parser.add_argument('--freeze-encoder', action='store_true',
-                    help='Only train classifier head, use a frozen encoder')
+parser.add_argument('--freeze-features', action='store_true',
+                    help='Only train classifier head')
 
 args = parser.parse_args()
 print(args)
@@ -64,13 +64,13 @@ test_loader = DataLoader(
 
 ## Configure model
 model = models.resnet34(pretrained=True)
-if args.freeze_encoder:
+if args.freeze_features:
     for param in model.parameters():
         param.requires_grad = False
 fc_features = model.fc.in_features
 model.fc = torch.nn.Linear(fc_features, NUM_LABELS)
 model.to(device)
-optim_params = model.fc.parameters() if args.freeze_encoder else model.parameters()
+optim_params = model.fc.parameters() if args.freeze_features else model.parameters()
 
 ## Configure loss, optimizer, lr scheduler
 criterion = torch.nn.CrossEntropyLoss()
@@ -79,8 +79,7 @@ criterion = torch.nn.CrossEntropyLoss()
 # # Decay LR by a factor of 0.1 every 7 epochs
 # lr_scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=7, gamma=0.1)
 
-optim = torch.optim.SGD(optim_params, lr=args.lr,
-                      momentum=0.9, weight_decay=5e-4)
+optim = torch.optim.SGD(optim_params, lr=args.lr, momentum=0.9, weight_decay=5e-4)
 # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.num_epochs)
 
 # xs, ys = None, None
