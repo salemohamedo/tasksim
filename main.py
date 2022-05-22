@@ -8,8 +8,10 @@ from continuum.tasks import split_train_val
 import torch
 import numpy, random
 from tqdm import tqdm
+from similarity_metrics.task2vec import Task2Vec, get_model
 
 from pathlib import Path
+import pickle
 import pandas as pd
 import numpy as np
 
@@ -121,16 +123,18 @@ class PretrainedModel(torch.nn.Module):
         outs = torch.mul(outs, full_mask)
         return outs
 
-def save_results(results):
+def save_results(results, embeddings):
     results_dir = Path(RESULTS_PATH)
-
     if not results_dir.exists():
         results_dir.mkdir()
-
     id_list = [int(str(x).split("_")[-1]) for x in results_dir.iterdir()]
     run_id = 0 if not id_list else max(id_list) + 1
+    run_dir = results_dir / f'run_{str(run_id).zfill(3)}'
+    run_dir.mkdir()
     df = pd.DataFrame(results)
-    df.to_csv(RESULTS_PATH + f'/run_{run_id}')
+    df.to_csv(run_dir / 'acc', float_format='%.3f')
+    with open(run_dir / 'emb', 'wb') as f:
+        pickle.dump(embeddings, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 def train(model, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn.CrossEntropyLoss, prev_test_loaders):
     model.train()
@@ -187,7 +191,7 @@ def prepare_scenarios(transform):
 ## Load data
 train_scenario, test_scenario = prepare_scenarios(transform)
 
-print(f"Number of classes: {train_scenario.nb_classes}.")
+print(f"Total number of classes: {train_scenario.nb_classes}.")
 print(f"Number of tasks: {train_scenario.nb_tasks}.")
 
 ## Configure loss, optimizer, lr scheduler
@@ -196,6 +200,7 @@ criterion = torch.nn.CrossEntropyLoss()
 
 start_train_time = time.time()
 prev_test_loaders = []
+embeddings = {}
 results = np.zeros((train_scenario.nb_tasks, train_scenario.nb_tasks))
 for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test_scenario)):
     print(f"\n######\t Training on task {task_id}\t ######\n")
@@ -219,9 +224,11 @@ for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test
                             momentum=0.9, weight_decay=5e-4)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=7, gamma=0.1)
 
+
     ## Train and evaluate test accuracy on current task
     run_train_loop(model, train_loader, test_loader, optim, lr_scheduler, criterion, args.num_epochs, prev_test_loaders)
     loss, acc = evaluate(model, test_loader, criterion)
+    results[task_id][task_id] = acc
     print(f"Task: {task_id}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
 
     ## Eval test accuracy on previous tasks
@@ -230,10 +237,18 @@ for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test
         for i, tl in enumerate(prev_test_loaders):
             loss, acc = evaluate(model, tl, criterion)
             print(f"Task: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
+            results[task_id][i] = acc
     prev_test_loaders.append(test_loader)
 
+    ## Compute task2vec embedding
+    probe_network = get_model('resnet34', pretrained=True, num_classes=int(
+        train_taskset.nb_classes+1)).cuda()
+    train_taskset._y -= train_taskset._y.min()
+    embeddings[task_id] = Task2Vec(probe_network, max_samples=1000,
+                      skip_layers=6).embed(train_taskset)
+
 if args.save_results:
-    save_results(results)
+    save_results(results, embeddings)
 
 print(f"\n\nTrain time: {time.time()-start_train_time:.2f}s")
 print(f"Total run time: {time.time()-very_start:.2f}s")
