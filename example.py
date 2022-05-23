@@ -75,12 +75,12 @@ optim_params = model.fc.parameters() if args.freeze_features else model.paramete
 ## Configure loss, optimizer, lr scheduler
 criterion = torch.nn.CrossEntropyLoss()
 # optim = torch.optim.SGD(model.fc.parameters(), lr=args.lr, momentum=0.9)
-# optim = torch.optim.Adam(model.parameters(), lr=3e-4)
+# optim = torch.optim.Adam(model.fc.parameters(), lr=3e-4)
 # # Decay LR by a factor of 0.1 every 7 epochs
 # lr_scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=7, gamma=0.1)
 
 optim = torch.optim.SGD(optim_params, lr=args.lr, momentum=0.9, weight_decay=5e-4)
-# lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.num_epochs)
+lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.num_epochs)
 
 # xs, ys = None, None
 def train(model, train_loader, optim: torch.optim.Optimizer, criterion : torch.nn.CrossEntropyLoss):
@@ -116,7 +116,7 @@ start = time.time()
 for i in range(args.num_epochs):
     train(model, train_loader, optim, criterion)
     loss, acc = evaluate(model, test_loader, criterion)
-    print(f"Epoch: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
-    # lr_scheduler.step()
+    print(f"Epoch: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {lr_scheduler.get_last_lr()}")
+    lr_scheduler.step()
 print(f"Train time: {time.time()-start:.2f}s")
 print(f"Total run time: {time.time()-very_start:.2f}s")

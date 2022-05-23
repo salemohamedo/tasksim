@@ -1,14 +1,16 @@
 import argparse
 import time
+import re
 
-from torchvision import models, transforms
+from torchvision import models, transforms, datasets
 from continuum import ClassIncremental
 from continuum.datasets import CIFAR100, CIFAR10
+from continuum.generators import ClassOrderGenerator
 from continuum.tasks import split_train_val
 import torch
 import numpy, random
 from tqdm import tqdm
-from similarity_metrics.task2vec import Task2Vec, get_model
+from similarity_metrics.task2vec import Task2Vec, get_model, plot_distance_matrix
 
 from pathlib import Path
 import pickle
@@ -45,21 +47,16 @@ parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                     help='learning rate (default: 0.01)')
 parser.add_argument('--freeze-features', action='store_true',
                     help='Only train classifier head')
+parser.add_argument('--skip-eval', action='store_true',
+                    help='Skip eval')
 parser.add_argument('--save-results', action='store_true',
                     help='Save run results to ./results dir')
 parser.add_argument('--increment', type=int, default=10, metavar='N')
+parser.add_argument('--num-permutations', type=int, default=1, metavar='N')
 
 args = parser.parse_args()
-print(args)
+print(vars(args))
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225],
-    )])
-
 
 class WeightNorm_Classifier(torch.nn.Module):
     def __init__(self, in_dim, n_classes, bias=False):
@@ -73,7 +70,6 @@ class WeightNorm_Classifier(torch.nn.Module):
 
         # initialize weights
         torch.nn.init.kaiming_normal_(self.weight)  # weight init
-        # super().__init__(*args, **kwargs)
 
     def forward(self, x, *args, **kwargs):
         return torch.nn.functional.linear(x, self.weight / torch.norm(self.weight, dim=1, keepdim=True), self.bias)
@@ -105,14 +101,15 @@ class PretrainedModel(torch.nn.Module):
         self.head_size = new_head_size
         self.encoder.to(device)
     
-    def restore_head_weights(self):
-        if self.old_head_weights is not None:
-            size = self.old_head_weights.size(0)
-            print(size)
-            print(self.old_head_weights.shape)
-            print(self.encoder.fc.weight.data.shape)
-            self.encoder.fc.weight.data[:size] = self.old_head_weights
-            self.encoder.fc.bias.data[:size] = self.old_head_bias
+    def unfreeze_features(self):
+        for name, param in self.encoder.named_parameters():
+            if re.search("fc", name) is None:
+                param.requires_grad = True
+    
+    def freeze_features(self):
+        for name, param in self.encoder.named_parameters():
+            if re.search("fc", name) is None:
+                param.requires_grad = False
     
     def forward(self, x, y):
         outs = self.encoder(x)
@@ -123,23 +120,32 @@ class PretrainedModel(torch.nn.Module):
         outs = torch.mul(outs, full_mask)
         return outs
 
-def save_results(results, embeddings):
+def get_run_id():
+    run_id = 0
+    results_dir = Path(RESULTS_PATH)
+    if results_dir.exists():
+        id_list = [int(str(x).split("_")[-1]) for x in results_dir.iterdir()]
+        run_id = 0 if not id_list else max(id_list) + 1
+    return run_id
+
+
+def save_results(results, embeddings, run_id, scenario_id):
     results_dir = Path(RESULTS_PATH)
     if not results_dir.exists():
         results_dir.mkdir()
-    id_list = [int(str(x).split("_")[-1]) for x in results_dir.iterdir()]
-    run_id = 0 if not id_list else max(id_list) + 1
     run_dir = results_dir / f'run_{str(run_id).zfill(3)}'
-    run_dir.mkdir()
+    if not run_dir.exists():
+        run_dir.mkdir()
     df = pd.DataFrame(results)
-    df.to_csv(run_dir / 'acc', float_format='%.3f')
-    with open(run_dir / 'emb', 'wb') as f:
+    df.to_csv(run_dir / f'case_{scenario_id}.acc', float_format='%.3f')
+    with open(run_dir / f'case_{scenario_id}.emb', 'wb') as f:
         pickle.dump(embeddings, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 def train(model, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn.CrossEntropyLoss, prev_test_loaders):
     model.train()
     total_loss = 0
-    for inputs, labels, task_ids in train_loader:
+    for inputs, *labels in train_loader:
+        labels = labels[0]
         inputs, labels = inputs.to(device), labels.to(device)
         optim.zero_grad()
         outs = model(inputs, labels)
@@ -155,7 +161,8 @@ def evaluate(model, test_loader, criterion):
     total_loss = 0
     accuracy = 0
     with torch.no_grad():
-        for inputs, labels, task_ids in test_loader:
+        for inputs, *labels in test_loader:
+            labels = labels[0]
             inputs, labels = inputs.to(device), labels.to(device)
             outs = model(inputs, labels)
             loss = criterion(outs, labels)
@@ -168,87 +175,106 @@ def evaluate(model, test_loader, criterion):
 def run_train_loop(model, train_loader, test_loader, optim, lr_scheduler, criterion, num_epochs, prev_test_loaders):
     for i in range(num_epochs):
         train(model, train_loader, optim, criterion, prev_test_loaders)
-        evaluate(model, test_loader, criterion)
+        if not args.skip_eval:
+            evaluate(model, test_loader, criterion)
         # lr_scheduler.step()
 
-def prepare_scenarios(transform):
-    train_dataset = CIFAR10('./data', train=True, download=True)
-    train_scenario = ClassIncremental(
-        train_dataset,
-        increment=args.increment,
-        initial_increment=0,
-        transformations=[transform]
-    )
-    test_dataset = CIFAR10('./data', train=False, download=True)
-    test_scenario = ClassIncremental(
-        test_dataset,
-        increment=args.increment,
-        initial_increment=0,
-        transformations=[transform]
-    )
-    return train_scenario, test_scenario
+def run_cl_sequence(train_scenario, test_scenario):
+    ## Configure loss, optimizer, lr scheduler
+    model = PretrainedModel(args.freeze_features)
+    criterion = torch.nn.CrossEntropyLoss()
+    start_train_time = time.time()
+    prev_test_loaders = []
+    embeddings = []
+    results = np.zeros((train_scenario.nb_tasks, train_scenario.nb_tasks))
+    for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test_scenario)):
+        print(f"\n######\t Training on task {task_id}\t ######\n")
 
-## Load data
-train_scenario, test_scenario = prepare_scenarios(transform)
+        ## Load data
+        train_taskset, val_taskset = split_train_val(train_taskset, val_split=0.1)
+        train_loader = torch.utils.data.DataLoader(
+            train_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+        val_loader = torch.utils.data.DataLoader(
+            val_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+        test_loader = torch.utils.data.DataLoader(
+            test_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+        train_ys = set(train_taskset._y)
+        test_ys = set(test_taskset._y)
+        assert train_ys == test_ys
+
+        ## Update model, optimizer
+        model.extend_head(train_taskset.nb_classes)
+        optim_params = model.encoder.fc.parameters() if args.freeze_features else model.encoder.parameters()
+        # optim = torch.optim.Adam(optim_params, lr=3e-4, weight_decay=5e-4)
+        optim = torch.optim.SGD(optim_params, lr=args.lr,
+                                momentum=0.9, weight_decay=5e-4)
+        # lr_scheduler = torch.optim.lr_scheduler.StepLR(
+        #     optim, step_size=7, gamma=0.1)
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optim, T_max=args.num_epochs)
+
+
+        ## Train and evaluate test accuracy on current task
+        run_train_loop(model, train_loader, test_loader, optim, lr_scheduler, criterion, args.num_epochs, prev_test_loaders)
+        loss, acc = evaluate(model, test_loader, criterion)
+        results[task_id][task_id] = acc
+        print(f"Task: {task_id}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
+
+        ## Eval test accuracy on previous tasks
+        if task_id == train_scenario.nb_tasks - 1:
+            print(f"\n## Testing Previous Task Accuracies ##\n")
+            for i, tl in enumerate(prev_test_loaders):
+                loss, acc = evaluate(model, tl, criterion)
+                print(f"Task: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
+                results[task_id][i] = acc
+        prev_test_loaders.append(test_loader)
+
+        # Compute task2vec embedding
+        # probe_network = get_model('resnet34', pretrained=True, num_classes=int(
+        #     train_taskset.nb_classes+1)).cuda()
+        # train_taskset._y -= train_taskset._y.min()
+        # embeddings.append(Task2Vec(probe_network, max_samples=1000,
+        #                   skip_layers=6).embed(train_taskset))
+        model.unfreeze_features()
+        embeddings.append(Task2Vec(model.encoder, max_samples=1000,
+                                    skip_layers=0).embed2(train_taskset))
+        model.freeze_features()
+    print(f"\n\nTrain time: {time.time()-start_train_time:.2f}s")
+    return results, embeddings
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+    )])
+
+def prepare_scenario(dataset, increment, transform, order=None):
+    return ClassIncremental(
+        dataset,
+        increment=increment,
+        transformations=[transform],
+        class_order=order
+    )
+
+train_dataset = CIFAR10('./data', train=True, download=True)
+test_dataset = CIFAR10('./data', train=False, download=True)
+train_scenario = prepare_scenario(train_dataset, args.increment, transform)
+scenario_generator = ClassOrderGenerator(train_scenario)
+seen_perms = set()
+
+run_id = get_run_id()
+    
+for scenario_id in range(args.num_permutations):
+    while tuple(train_scenario.class_order) in seen_perms:
+        train_scenario = scenario_generator.sample(seed=scenario_id)
+    test_scenario = prepare_scenario(test_dataset, args.increment, transform, train_scenario.class_order)
+    results, embeddings = run_cl_sequence(train_scenario, test_scenario)
+    seen_perms.add(tuple(train_scenario.class_order))
+
+    if args.save_results:
+        save_results(results, embeddings, run_id, scenario_id)
 
 print(f"Total number of classes: {train_scenario.nb_classes}.")
 print(f"Number of tasks: {train_scenario.nb_tasks}.")
-
-## Configure loss, optimizer, lr scheduler
-model = PretrainedModel(args.freeze_features)
-criterion = torch.nn.CrossEntropyLoss()
-
-start_train_time = time.time()
-prev_test_loaders = []
-embeddings = {}
-results = np.zeros((train_scenario.nb_tasks, train_scenario.nb_tasks))
-for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test_scenario)):
-    print(f"\n######\t Training on task {task_id}\t ######\n")
-
-    ## Load data
-    train_taskset, val_taskset = split_train_val(train_taskset, val_split=0.1)
-    train_loader = torch.utils.data.DataLoader(
-        train_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4)
-    val_loader = torch.utils.data.DataLoader(
-        val_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4)
-    test_loader = torch.utils.data.DataLoader(
-        test_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4)
-    train_ys = set(train_taskset._y)
-    test_ys = set(test_taskset._y)
-    assert train_ys == test_ys
-
-    ## Update model, optimizer
-    model.extend_head(train_taskset.nb_classes)
-    optim_params = model.encoder.fc.parameters() if args.freeze_features else model.encoder.parameters()
-    optim = torch.optim.SGD(optim_params, lr=args.lr,
-                            momentum=0.9, weight_decay=5e-4)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=7, gamma=0.1)
-
-
-    ## Train and evaluate test accuracy on current task
-    run_train_loop(model, train_loader, test_loader, optim, lr_scheduler, criterion, args.num_epochs, prev_test_loaders)
-    loss, acc = evaluate(model, test_loader, criterion)
-    results[task_id][task_id] = acc
-    print(f"Task: {task_id}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
-
-    ## Eval test accuracy on previous tasks
-    if len(prev_test_loaders) > 0:
-        print(f"\n## Testing Previous Task Accuracies ##\n")
-        for i, tl in enumerate(prev_test_loaders):
-            loss, acc = evaluate(model, tl, criterion)
-            print(f"Task: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
-            results[task_id][i] = acc
-    prev_test_loaders.append(test_loader)
-
-    ## Compute task2vec embedding
-    probe_network = get_model('resnet34', pretrained=True, num_classes=int(
-        train_taskset.nb_classes+1)).cuda()
-    train_taskset._y -= train_taskset._y.min()
-    embeddings[task_id] = Task2Vec(probe_network, max_samples=1000,
-                      skip_layers=6).embed(train_taskset)
-
-if args.save_results:
-    save_results(results, embeddings)
-
-print(f"\n\nTrain time: {time.time()-start_train_time:.2f}s")
 print(f"Total run time: {time.time()-very_start:.2f}s")

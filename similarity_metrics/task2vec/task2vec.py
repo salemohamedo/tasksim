@@ -98,6 +98,11 @@ class Task2Vec:
         self.compute_fisher(dataset)
         embedding = self.extract_embedding(self.model)
         return embedding
+    
+    def embed2(self, dataset: Dataset):
+        self.compute_fisher(dataset)
+        embedding = self.extract_embedding2(self.model)
+        return embedding
 
     def montecarlo_fisher(self, dataset: Dataset, epochs: int = 1):
         logging.info("Using montecarlo Fisher")
@@ -113,9 +118,13 @@ class Task2Vec:
             p.grad_counter = 0
         for k in range(epochs):
             logging.info(f"\tepoch {k + 1}/{epochs}")
-            for i, (data, target) in enumerate(tqdm(data_loader, leave=False, desc="Computing Fisher")):
+            for i, (data, *target) in enumerate(tqdm(data_loader, leave=False, desc="Computing Fisher")):
                 data = data.to(device)
-                output = self.model(data, start_from=self.skip_layers)
+                target = target[0]
+                if self.skip_layers > 0:
+                    output = self.model(data, start_from=self.skip_layers)
+                else:
+                    output = self.model(data)
                 # The gradients used to compute the FIM needs to be for y sampled from
                 # the model distribution y ~ p_w(y|x), not for y from the dataset
                 if self.bernoulli:
@@ -233,7 +242,7 @@ class Task2Vec:
         if loader_opts is None:
             loader_opts = {}
         data_loader = DataLoader(dataset, shuffle=False, batch_size=loader_opts.get('batch_size', 64),
-                                 num_workers=loader_opts.get('num_workers', 6), drop_last=False)
+                                 num_workers=loader_opts.get('num_workers', 4), drop_last=False)
 
         device = next(self.model.parameters()).device
 
@@ -251,9 +260,10 @@ class Task2Vec:
             n_batches = len(data_loader)
         targets = []
 
-        for i, (input, target, _) in tqdm(enumerate(itertools.islice(data_loader, 0, n_batches)), total=n_batches,
+        for i, (input, *target) in tqdm(enumerate(itertools.islice(data_loader, 0, n_batches)), total=n_batches,
                                        leave=False,
                                        desc="Caching features"):
+            target = target[0]
             targets.append(target.clone())
             self.model(input.to(device))
         for hook in hooks:
@@ -322,8 +332,37 @@ class Task2Vec:
                 scale.append(np.ones_like(filterwise_hess))
         return Embedding(hessian=np.concatenate(hess), scale=np.concatenate(scale), meta=None)
 
+    def extract_embedding2(self, model):
+        """
+        Reads the values stored by `compute_fisher` and returns them in a common format that describes the diagonal of the
+        Fisher Information Matrix for each layer.
 
-def _get_loader(trainset, testset=None, batch_size=64, num_workers=6, num_samples=10000, drop_last=True):
+        :param model:
+        :return:
+        """
+        hess, scale = [], []
+        for name, module in model.named_modules():
+            if module is model.fc:
+                continue
+            # The variational Fisher approximation estimates the variance of noise that can be added to the weights
+            # without increasing the error more than a threshold. The inverse of this is proportional to an
+            # approximation of the hessian in the local minimum.
+            if hasattr(module, 'logvar0') and hasattr(module, 'loglambda2'):
+                logvar = module.logvar0.view(-1).detach().cpu().numpy()
+                hess.append(np.exp(-logvar))
+                loglambda2 = module.loglambda2.detach().cpu().numpy()
+                scale.append(np.exp(-loglambda2).repeat(logvar.size))
+            # The other Fisher approximation methods directly approximate the hessian at the minimum
+            elif hasattr(module, 'weight') and hasattr(module.weight, 'grad2_acc'):
+                grad2 = module.weight.grad2_acc.cpu().detach().numpy()
+                filterwise_hess = grad2.reshape(
+                    grad2.shape[0], -1).mean(axis=1)
+                hess.append(filterwise_hess)
+                scale.append(np.ones_like(filterwise_hess))
+        return Embedding(hessian=np.concatenate(hess), scale=np.concatenate(scale), meta=None)
+
+
+def _get_loader(trainset, testset=None, batch_size=64, num_workers=4, num_samples=10000, drop_last=True):
     if getattr(trainset, 'is_multi_label', False):
         raise ValueError("Multi-label datasets not supported")
     # TODO: Find a way to standardize this
@@ -331,6 +370,8 @@ def _get_loader(trainset, testset=None, batch_size=64, num_workers=6, num_sample
         labels = trainset.labels
     elif hasattr(trainset, 'targets'):
         labels = trainset.targets
+    elif hasattr(trainset, '_y'):
+        labels = trainset._y
     else:
         labels = list(trainset.tensors[1].cpu().numpy())
     num_classes = int(getattr(trainset, 'num_classes', max(labels) + 1))
