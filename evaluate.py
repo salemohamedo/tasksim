@@ -13,7 +13,7 @@ RESULTS_PATH = './results'
 
 parser = argparse.ArgumentParser(description='Tasksim Evaluate')
 parser.add_argument('--run-dir', required=True)
-
+parser.add_argument('--out-file', required=True)
 args = parser.parse_args()
 
 results_dir = Path(RESULTS_PATH)
@@ -44,6 +44,6 @@ for case_id in range(num_cases):
 plt.scatter(cos_diffs, error_rates, marker='o')
 plt.xlabel("Total task dissimilarity")
 plt.ylabel("Mean task error rate")
-plt.savefig("test.png")
+plt.savefig(args.out_file)
 
 print(f"Pearson correlation coefficient: {pearsonr(error_rates, cos_diffs)[0]}")

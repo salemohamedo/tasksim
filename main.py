@@ -4,7 +4,7 @@ import re
 
 from torchvision import models, transforms, datasets
 from continuum import ClassIncremental
-from continuum.datasets import CIFAR100, CIFAR10
+from continuum.datasets import CIFAR100, CIFAR10, MNIST
 from continuum.generators import ClassOrderGenerator
 from continuum.tasks import split_train_val
 import torch
@@ -53,6 +53,8 @@ parser.add_argument('--save-results', action='store_true',
                     help='Save run results to ./results dir')
 parser.add_argument('--increment', type=int, default=10, metavar='N')
 parser.add_argument('--num-permutations', type=int, default=1, metavar='N')
+parser.add_argument('--dataset', default="cifar-10", metavar='N', choices=['cifar-10', 'cifar-100', 'mnist'])
+
 
 args = parser.parse_args()
 print(vars(args))
@@ -257,13 +259,29 @@ def prepare_scenario(dataset, increment, transform, order=None):
         class_order=order
     )
 
-train_dataset = CIFAR10('./data', train=True, download=True)
-test_dataset = CIFAR10('./data', train=False, download=True)
+def load_dataset(dataset):
+    if dataset == "cifar-10":
+        train_dataset = CIFAR10('./data', train=True, download=True)
+        test_dataset = CIFAR10('./data', train=False, download=True)
+    elif dataset == "cifar-100":
+        train_dataset = CIFAR100('./data', train=True, download=True)
+        test_dataset = CIFAR100('./data', train=False, download=True)    
+    elif dataset == "mnist":
+        train_dataset = MNIST('./data', train=True, download=True)
+        test_dataset = MNIST('./data', train=False, download=True)
+    else:
+        raise ValueError(f"Dataset: {dataset} not valid")
+    return train_dataset, test_dataset
+
+
+train_dataset, test_dataset = load_dataset(args.dataset)
 train_scenario = prepare_scenario(train_dataset, args.increment, transform)
 scenario_generator = ClassOrderGenerator(train_scenario)
 seen_perms = set()
 
 run_id = get_run_id()
+
+print(f"Starting run: {run_id}")
     
 for scenario_id in range(args.num_permutations):
     while tuple(train_scenario.class_order) in seen_perms:
