@@ -16,6 +16,7 @@ from pathlib import Path
 import pickle
 import pandas as pd
 import numpy as np
+import json
 
 RESULTS_PATH = './results'
 
@@ -138,6 +139,8 @@ def save_results(results, embeddings, run_id, scenario_id):
     run_dir = results_dir / f'run_{str(run_id).zfill(3)}'
     if not run_dir.exists():
         run_dir.mkdir()
+        with open(run_dir / 'config.txt', 'w') as config:
+            json.dump(vars(args), config)
     df = pd.DataFrame(results)
     df.to_csv(run_dir / f'case_{scenario_id}.acc', float_format='%.3f')
     with open(run_dir / f'case_{scenario_id}.emb', 'wb') as f:
@@ -195,11 +198,11 @@ def run_cl_sequence(train_scenario, test_scenario):
         ## Load data
         train_taskset, val_taskset = split_train_val(train_taskset, val_split=0.1)
         train_loader = torch.utils.data.DataLoader(
-            train_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+            train_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True)
         val_loader = torch.utils.data.DataLoader(
-            val_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+            val_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True)
         test_loader = torch.utils.data.DataLoader(
-            test_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+            test_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True)
         train_ys = set(train_taskset._y)
         test_ys = set(test_taskset._y)
         assert train_ys == test_ys
@@ -244,18 +247,34 @@ def run_cl_sequence(train_scenario, test_scenario):
     print(f"\n\nTrain time: {time.time()-start_train_time:.2f}s")
     return results, embeddings
 
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225],
-    )])
+# transform = transforms.Compose([
+#     transforms.ToTensor(),
+#     transforms.Lambda(lambda x: x.repeat(3, 1, 1)),
+#     transforms.Normalize(
+#         mean=[0.485, 0.456, 0.406],
+#         std=[0.229, 0.224, 0.225],
+#     )
+#     # transforms.Normalize((0.1307,), (0.3081,))
+#     ])
+if args.dataset == 'mnist':
+    transform = [
+        transforms.ToTensor(), 
+        transforms.Lambda(lambda x: x.repeat(3, 1, 1))
+    ]
+else:
+    transform = [
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225])
+    ]
 
 def prepare_scenario(dataset, increment, transform, order=None):
+    
     return ClassIncremental(
         dataset,
         increment=increment,
-        transformations=[transform],
+        transformations=transform,
         class_order=order
     )
 
