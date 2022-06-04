@@ -20,7 +20,7 @@ args = parser.parse_args()
 results_dir = Path(RESULTS_PATH)
 if not results_dir.exists():
     print("No Results Directory!")
-run_dir = results_dir / args.run_dir
+run_dir = Path(args.run_dir)
 if not run_dir.exists():
     print(f"No Run Directory: {run_dir}")
 

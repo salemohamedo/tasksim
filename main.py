@@ -2,15 +2,15 @@ import argparse
 import time
 import re
 
-from torchvision import models, transforms, datasets
+from torchvision import models, transforms
 from continuum import ClassIncremental
-from continuum.datasets import CIFAR100, CIFAR10, MNIST
 from continuum.generators import ClassOrderGenerator
 from continuum.tasks import split_train_val
 import torch
 import numpy, random
-from tqdm import tqdm
-from similarity_metrics.task2vec import Task2Vec, get_model, plot_distance_matrix
+
+from similarity_metrics.task2vec import Task2Vec, get_model
+from dataset_utils import DATASETS, load_dataset
 
 from pathlib import Path
 import pickle
@@ -42,8 +42,8 @@ parser.add_argument('--batch-size', type=int, default=64, metavar='N',
                     help='input batch size for training (default: 32)')
 parser.add_argument('--test-batch-size', type=int, default=64, metavar='N',
                     help='input batch size for testing (default: 64)')
-parser.add_argument('--num-epochs', type=int, default=1000, metavar='N',
-                    help='number of epochs to train (default: 64)')
+parser.add_argument('--num-epochs', type=int, default=1, metavar='N',
+                    help='number of epochs to train (default: 1)')
 parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                     help='learning rate (default: 0.01)')
 parser.add_argument('--freeze-features', action='store_true',
@@ -54,7 +54,7 @@ parser.add_argument('--save-results', action='store_true',
                     help='Save run results to ./results dir')
 parser.add_argument('--increment', type=int, default=10, metavar='N')
 parser.add_argument('--num-permutations', type=int, default=1, metavar='N')
-parser.add_argument('--dataset', default="cifar-10", metavar='N', choices=['cifar-10', 'cifar-100', 'mnist'])
+parser.add_argument('--dataset', default="cifar-10", metavar='N', choices=DATASETS.keys())
 
 
 args = parser.parse_args()
@@ -77,6 +77,93 @@ class WeightNorm_Classifier(torch.nn.Module):
     def forward(self, x, *args, **kwargs):
         return torch.nn.functional.linear(x, self.weight / torch.norm(self.weight, dim=1, keepdim=True), self.bias)
         # return torch.nn.functional.linear(x, self.weight, self.bias)
+
+
+class NMC_Classifier(torch.nn.Module):
+    """ Custom Linear layer but mimics a standard linear layer """
+
+
+    def __init__(self, size_in, size_out, device='cpu', *args, **kwargs):
+        super().__init__()
+        self.device = device
+        self.size_in, self.size_out = size_in, size_out
+        self.data = torch.zeros(0, size_in)
+        self.labels = torch.zeros(0)
+        self.register_buffer('weight', torch.zeros(
+            size_out, size_in))  # mean layer
+        self.register_buffer('nb_inst', torch.zeros(size_out))
+        self.register_buffer('_initiated', torch.Tensor([0.]))
+
+    @property
+    def initiated(self):
+        if self._initiated.item() == 0.:
+            return False
+        else:
+            return True
+
+    @initiated.setter
+    def initiated(self, value: bool):
+        if value:
+            self._initiated = torch.Tensor([1.])
+        else:
+            self._initiated = torch.Tensor([0.])
+
+    def __call__(self, x, y=None, epoch=None, *args, **kwargs):
+        self.to('cpu')
+        x = x.to('cpu')
+        o = self.forward(x)
+        if self.training and y is not None and epoch is not None:
+            assert y is not None
+            assert epoch is not None
+            self.accumulate(x, y, epoch)
+        return o
+
+    def forward(self, x):
+        data = x.detach().cpu()  # no backprop possible
+
+        assert not torch.isnan(data).any()
+
+        if self.initiated:
+            # torch.cdist(c * b, d * b) -> c*d
+            out = torch.cdist(data, self.weight)
+            # convert smaller is better into bigger in better
+            out = out * -1
+        else:
+            # if mean are not initiate we return random predition
+            out = torch.randn((data.shape[0], self.size_out)).to(self.device)
+        return out.to(self.device)
+
+    def update(self, epoch=0):
+        pass
+
+    @torch.no_grad()
+    def accumulate(self, x, y, epoch=0):
+        if epoch == 0:
+            self.data = x.view(-1, self.size_in).cpu()
+            self.labels = y
+            for i in range(self.size_out):
+                indexes = torch.where(self.labels == i)[0]
+                self.weight[i] = (
+                    self.weight[i] * (1.0 * self.nb_inst[i]) + self.data[indexes].sum(0))
+                self.nb_inst[i] += len(indexes)
+                if self.nb_inst[i] != 0:
+                    self.weight[i] = self.weight[i] / (1.0 * self.nb_inst[i])
+
+            self.data = torch.zeros(0, self.size_in)
+            self.labels = torch.zeros(0)
+            self.initiated = True
+
+        assert not torch.isnan(self.weight).any()
+
+    def expand(self, size_out):
+        self.size_out = size_out
+        weight = torch.zeros(self.size_out, self.size_in)
+        weight[:self.weight.shape[0]] = self.weight
+        self.register_buffer('weight', weight)  # mean layer
+        nb_inst = torch.zeros(size_out)
+        nb_inst[:self.nb_inst.shape[0]] = self.nb_inst
+        self.register_buffer('nb_inst', nb_inst)
+        # pass
 
 ## Configure model
 class PretrainedModel(torch.nn.Module):
@@ -198,11 +285,11 @@ def run_cl_sequence(train_scenario, test_scenario):
         ## Load data
         train_taskset, val_taskset = split_train_val(train_taskset, val_split=0.1)
         train_loader = torch.utils.data.DataLoader(
-            train_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True)
+            train_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
         val_loader = torch.utils.data.DataLoader(
-            val_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True)
+            val_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
         test_loader = torch.utils.data.DataLoader(
-            test_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True)
+            test_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
         train_ys = set(train_taskset._y)
         test_ys = set(test_taskset._y)
         assert train_ys == test_ys
@@ -247,15 +334,6 @@ def run_cl_sequence(train_scenario, test_scenario):
     print(f"\n\nTrain time: {time.time()-start_train_time:.2f}s")
     return results, embeddings
 
-# transform = transforms.Compose([
-#     transforms.ToTensor(),
-#     transforms.Lambda(lambda x: x.repeat(3, 1, 1)),
-#     transforms.Normalize(
-#         mean=[0.485, 0.456, 0.406],
-#         std=[0.229, 0.224, 0.225],
-#     )
-#     # transforms.Normalize((0.1307,), (0.3081,))
-#     ])
 if args.dataset == 'mnist':
     transform = [
         transforms.ToTensor(), 
@@ -268,6 +346,8 @@ else:
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225])
     ]
+    if args.dataset == 'cub200':
+        transform.insert(0, transforms.Resize([224, 224]))
 
 def prepare_scenario(dataset, increment, transform, order=None):
     
@@ -277,21 +357,6 @@ def prepare_scenario(dataset, increment, transform, order=None):
         transformations=transform,
         class_order=order
     )
-
-def load_dataset(dataset):
-    if dataset == "cifar-10":
-        train_dataset = CIFAR10('./data', train=True, download=True)
-        test_dataset = CIFAR10('./data', train=False, download=True)
-    elif dataset == "cifar-100":
-        train_dataset = CIFAR100('./data', train=True, download=True)
-        test_dataset = CIFAR100('./data', train=False, download=True)    
-    elif dataset == "mnist":
-        train_dataset = MNIST('./data', train=True, download=True)
-        test_dataset = MNIST('./data', train=False, download=True)
-    else:
-        raise ValueError(f"Dataset: {dataset} not valid")
-    return train_dataset, test_dataset
-
 
 train_dataset, test_dataset = load_dataset(args.dataset)
 train_scenario = prepare_scenario(train_dataset, args.increment, transform)
