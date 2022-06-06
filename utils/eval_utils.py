@@ -5,8 +5,21 @@ import pandas as pd
 import numpy as np
 import json
 from similarity_metrics.task2vec import cosine
+from dataclasses import dataclass
 import matplotlib.pyplot as plt
 plt.style.use('seaborn-whitegrid')
+
+
+@dataclass
+class ResultsSummary:
+    acc_lin: float = None
+    fgt_lin: float = None
+    acc_nmc: float = None
+    fgt_nmc: float = None
+    sim_acc_lin: float = None
+    sim_fgt_lin: float = None
+    sim_acc_nmc: float = None
+    sim_fgt_nmc: float = None
 
 def parse_acc_forgetting(results_file):
     results = pd.read_csv(results_file)
@@ -54,20 +67,20 @@ def get_run_results(run_dir):
     
     return lin_accs, lin_fgts, nmc_accs, nmc_fgts, task_sims
 
-def process_run_results(lin_accs, lin_fgts, nmc_accs, nmc_fgts, task_sims):
-    results = {}
-    results['acc_lin'] = np.mean(lin_accs)
-    results['fgt_lin'] = np.mean(lin_fgts)
-    results['acc_nmc'] = np.mean(nmc_accs)
-    results['fgt_nmc'] = np.mean(nmc_fgts)
+def process_run_results(lin_accs, lin_fgts, nmc_accs, nmc_fgts, task_sims) -> ResultsSummary:
+    results = ResultsSummary()
+    results.acc_lin = np.mean(lin_accs) * 100
+    results.fgt_lin = np.mean(lin_fgts) * 100
+    results.acc_nmc = np.mean(nmc_accs) * 100
+    results.fgt_nmc = np.mean(nmc_fgts) * 100
 
     ## Invert distances so smaller is better
     invert_task_sims = np.array(task_sims) * -1
 
-    results['sim_acc_lin'] = pearsonr(lin_accs, invert_task_sims)[0]
-    results['sim_fgt_lin'] = pearsonr(lin_fgts, invert_task_sims)[0]
-    results['sim_acc_nmc'] = pearsonr(nmc_accs, invert_task_sims)[0]
-    results['sim_fgt_nmc'] = pearsonr(nmc_fgts, invert_task_sims)[0]
+    results.sim_acc_lin = pearsonr(lin_accs, invert_task_sims)[0]
+    results.sim_fgt_lin = pearsonr(lin_fgts, invert_task_sims)[0]
+    results.sim_acc_nmc = pearsonr(nmc_accs, invert_task_sims)[0]
+    results.sim_fgt_nmc = pearsonr(nmc_fgts, invert_task_sims)[0]
     return results
 
 def plot_similarity_correlation(task_metric, task_sim, task_metric_label, title, out_file):
