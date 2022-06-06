@@ -8,7 +8,7 @@ import torch
 import numpy as np, random
 
 from similarity_metrics.task2vec import Task2Vec, get_model
-from dataset_utils import DATASETS, load_dataset, get_transform
+from utils.dataset_utils import DATASETS, load_dataset, get_transform
 from models import PretrainedModel
 from utils import get_run_id, save_results
 
