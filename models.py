@@ -65,7 +65,7 @@ class NMC_Classifier(torch.nn.Module):
 ## Configure model
 
 class PretrainedModel(torch.nn.Module):
-    def __init__(self, device, freeze_features=False, nmc=False):
+    def __init__(self, device, freeze_features=False, multihead=False):
         super().__init__()
         self.encoder = models.resnet34(pretrained=True)
         self.head_size = 0
@@ -73,9 +73,28 @@ class PretrainedModel(torch.nn.Module):
         self.fc_in_features = self.encoder.fc.in_features
         self.old_head_weights, self.old_head_bias = None, None
         self.nmc = False
+        self.multihead = multihead
+
+        if self.multihead:
+            if freeze_features:
+                raise ValueError("Don't use frozen model with multihead setup")
+            self.heads = torch.nn.ModuleList()
+
         if freeze_features:
             for param in self.encoder.parameters():
                 param.requires_grad = False
+
+    def add_head(self, head_size):
+        self.heads.append(torch.nn.Linear(self.fc_in_features, head_size, device=self.device))
+        # self.heads.append(WeightNorm_Classifier(self.fc_in_features, head_size, bias=True))
+        # self.heads[-1] = self.heads[-1].to(self.device)
+    
+    def set_head(self, i):
+        self.encoder.fc = self.heads[i]
+
+    def add_and_set_head(self, head_size):
+        self.add_head(head_size)
+        self.set_head(-1)
 
     def extend_head(self, n):
         if self.nmc == True:
@@ -107,8 +126,9 @@ class PretrainedModel(torch.nn.Module):
                 param.requires_grad = False
 
     def forward(self, x, y):
-        if self.nmc:
+        if self.nmc or self.multihead:
             return self.encoder(x)
+        ## Apply masking
         outs = self.encoder(x)
         classes_mask = torch.eye(self.head_size).cuda().float()
         label_unique = y.unique()

@@ -10,11 +10,9 @@ import numpy as np, random
 from similarity_metrics.task2vec import Task2Vec, get_model
 from utils.dataset_utils import DATASETS, load_dataset, get_transform
 from models import PretrainedModel
-from utils import get_run_id, save_results
+from utils.utils import get_run_id, save_results
 
 import wandb
-
-# wandb.init(project="tasksim", entity="omar-s")
 
 very_start = time.time()
 
@@ -48,10 +46,17 @@ parser.add_argument('--save-results', action='store_true',
 parser.add_argument('--increment', type=int, default=10, metavar='N')
 parser.add_argument('--num-permutations', type=int, default=1, metavar='N')
 parser.add_argument('--dataset', default="cifar-10", metavar='N', choices=DATASETS.keys())
-
-
+parser.add_argument('--multihead', action='store_true')
+parser.add_argument('--wandb', action='store_true', help='Save results to wandb')
 args = parser.parse_args()
 print(vars(args))
+
+if args.wandb:
+    wandb.init(project="CL-Similarity", entity="clip_cl", config=args)
+
+if args.multihead and (args.nmc or args.freeze_features):
+    raise ValueError("Can't enable multihead and (freeze features/nmc)")
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train(model, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn.CrossEntropyLoss, epoch):
@@ -97,7 +102,7 @@ def run_train_loop(model, train_loader, test_loader, optim, lr_scheduler, criter
         if not model.nmc:
             lr_scheduler.step()
 
-def run_cl_sequence(model, train_scenario, test_scenario, nmc=False):
+def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=False):
     ## Configure loss, optimizer, lr scheduler
     criterion = torch.nn.CrossEntropyLoss()
     start_train_time = time.time()
@@ -107,6 +112,11 @@ def run_cl_sequence(model, train_scenario, test_scenario, nmc=False):
     for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test_scenario)):
         print(f"\n######\t Training on task {task_id}\t ######\n")
 
+        ## For multihead we need to update labels to be between
+        ## 0 and # classses in task
+        if args.multihead:
+            train_taskset._y -= train_taskset._y.min()
+            test_taskset._y -= test_taskset._y.min()
         ## Load data
         train_taskset, val_taskset = split_train_val(train_taskset, val_split=0.1)
         train_loader = torch.utils.data.DataLoader(
@@ -120,7 +130,10 @@ def run_cl_sequence(model, train_scenario, test_scenario, nmc=False):
         assert train_ys == test_ys
 
         ## Update model, optimizer
-        model.extend_head(train_taskset.nb_classes)
+        if args.multihead:
+            model.add_and_set_head(train_taskset.nb_classes)
+        else:
+            model.extend_head(train_taskset.nb_classes)
         # optim = torch.optim.Adam(optim_params, lr=3e-4, weight_decay=5e-4)
         optim, lr_scheduler = None, None
         if not nmc:
@@ -141,21 +154,22 @@ def run_cl_sequence(model, train_scenario, test_scenario, nmc=False):
         print(f"Task: {task_id}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
 
         ## Eval test accuracy on previous tasks
-        if task_id == train_scenario.nb_tasks - 1:
-            print(f"\n## Testing Previous Task Accuracies ##\n")
-            for i, tl in enumerate(prev_test_loaders):
-                loss, acc = evaluate(model, tl, criterion)
-                print(f"Task: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
-                results[task_id][i] = acc
+        print(f"\n## Testing Previous Task Accuracies ##\n")
+        for i, tl in enumerate(prev_test_loaders):
+            if args.multihead:
+                model.set_head(i)
+            loss, acc = evaluate(model, tl, criterion)
+            print(f"Task: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
+            results[task_id][i] = acc
         prev_test_loaders.append(test_loader)
 
         # Compute task2vec embedding
-        # probe_network = get_model('resnet34', pretrained=True, num_classes=int(
-        #     train_taskset.nb_classes+1)).cuda()
-        # train_taskset._y -= train_taskset._y.min()
-        # embeddings.append(Task2Vec(probe_network, max_samples=1000,
-        #                   skip_layers=6).embed(train_taskset))
-        if not nmc:
+        if args.multihead:
+            probe_network = get_model('resnet34', pretrained=True, num_classes=int(
+                train_taskset.nb_classes+1)).cuda()
+            embeddings.append(Task2Vec(probe_network, max_samples=1000,
+                              skip_layers=6).embed(train_taskset))
+        elif not nmc:
             model.unfreeze_features()
             embeddings.append(Task2Vec(model.encoder, max_samples=1000,
                                         skip_layers=0).embed2(train_taskset))
@@ -185,7 +199,7 @@ for scenario_id in range(args.num_permutations):
         train_scenario = scenario_generator.sample(seed=scenario_id)
     seen_perms.add(tuple(train_scenario.class_order))
     test_scenario = prepare_scenario(test_dataset, args.increment, transform, train_scenario.class_order)
-    model = PretrainedModel(device, args.freeze_features)
+    model = PretrainedModel(device, freeze_features=args.freeze_features, multihead=args.multihead)
     model = model.to(device)
     nmc_results, linear_classifier_results, embeddings = None, None, None
     linear_classifier_results, embeddings = run_cl_sequence(model, train_scenario, test_scenario)
@@ -194,7 +208,7 @@ for scenario_id in range(args.num_permutations):
         nmc_results, _ = run_cl_sequence(model, train_scenario, test_scenario, nmc=True)
     if args.save_results:
         save_results(args, linear_classifier_results, nmc_results,
-                     embeddings, run_id, scenario_id)
+                     embeddings, run_id, scenario_id, wandb)
 
 
 print(f"Total number of classes: {train_scenario.nb_classes}.")

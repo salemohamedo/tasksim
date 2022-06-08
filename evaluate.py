@@ -4,8 +4,6 @@ from utils.eval_utils import get_run_results, process_run_results, plot_similari
 
 parser = argparse.ArgumentParser(description='Tasksim Evaluate')
 parser.add_argument('--run-dir', required=True)
-# parser.add_argument('--out-file', required=True)
-# parser.add_argument('--title', required=True)
 args = parser.parse_args()
 
 run_config = load_config(args.run_dir)

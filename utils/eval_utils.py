@@ -7,8 +7,8 @@ import json
 from similarity_metrics.task2vec import cosine
 from dataclasses import dataclass
 import matplotlib.pyplot as plt
+from typing import List
 plt.style.use('seaborn-whitegrid')
-
 
 @dataclass
 class ResultsSummary:
@@ -21,23 +21,29 @@ class ResultsSummary:
     sim_acc_nmc: float = None
     sim_fgt_nmc: float = None
 
-def parse_acc_forgetting(results_file):
+def parse_acc_forgetting(results_file: str) -> List:
     results = pd.read_csv(results_file)
     results = results.to_numpy()
     results = results[:,1:]
-    acc = results[-1].mean()
-    forgetting = 0
-    for i in range(results.shape[1] - 1):
-        forgetting += results[i][i] - results[-1][i]
-    return acc, forgetting / (results.shape[1] - 1)
+    mean_accs = []
+    mean_fgts = []
+    num_tasks = results.shape[0]
+    for i in range(1, num_tasks):
+        mean_acc = results[i][:i + 1].mean()
+        mean_fgt = np.mean([results[j][j] - results[i][j] for j in range(i)])
+        mean_accs.append(mean_acc)
+        mean_fgts.append(mean_fgt)
+    return mean_accs, mean_fgts
 
-def parse_task_sim(embeddings_file):
+def parse_task_sim(embeddings_file: str) -> List:
     with open(embeddings_file, 'rb') as f:
         embeddings = pickle.load(f)
-    total_distance = 0
-    for i in range(len(embeddings) - 1):
-        total_distance += cosine(embeddings[i], embeddings[i + 1])
-    return total_distance
+    running_distance = 0
+    distances = []
+    for i in range(1, len(embeddings)):
+        running_distance += cosine(embeddings[i - 1], embeddings[i])
+        distances.append(running_distance / i)
+    return distances
 
 def get_run_results(run_dir):
     run_dir = Path(run_dir)
@@ -56,14 +62,14 @@ def get_run_results(run_dir):
     nmc_fgts = []
     task_sims = []
     for case_id in range(num_cases):
-        lin_acc, lin_fgt = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.lin")
-        nmc_acc, nmc_fgt = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.nmc")
-        task_sim = parse_task_sim(run_dir / f'case_{case_id}.emb')
-        lin_accs.append(lin_acc)
-        lin_fgts.append(lin_fgt)
-        nmc_accs.append(nmc_acc)
-        nmc_fgts.append(nmc_fgt)
-        task_sims.append(task_sim)
+        lin_accs, lin_fgts = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.lin")
+        nmc_accs, nmc_fgts = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.nmc")
+        task_sims = parse_task_sim(run_dir / f'case_{case_id}.emb')
+        lin_accs.extend(lin_accs)
+        lin_fgts.extend(lin_fgts)
+        nmc_accs.extend(nmc_accs)
+        nmc_fgts.extend(nmc_fgts)
+        task_sims.extend(task_sims)
     
     return lin_accs, lin_fgts, nmc_accs, nmc_fgts, task_sims
 

@@ -15,7 +15,13 @@ def get_run_id():
     return run_id
 
 
-def save_results(args, linear_results, nmc_results, embeddings, run_id, scenario_id):
+def save_results(args, linear_results, nmc_results, embeddings, run_id, scenario_id, wandb):
+    if args.wandb:
+        if linear_results is not None:
+            wandb.run.summary[f"linear_results_seq_{scenario_id}"] = linear_results
+        if nmc_results is not None:
+            wandb.run.summary[f"nmc_results_seq_{scenario_id}"] = nmc_results
+
     results_dir = Path(RESULTS_PATH)
     if not results_dir.exists():
         results_dir.mkdir()

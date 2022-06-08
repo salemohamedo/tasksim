@@ -40,7 +40,13 @@ task_metric_results = pd.DataFrame(
     index=DATASET_NAMES)
 
 # sim_results.to_csv('experiments/results_frozen_features.sim', float_format='%.3f')
-sim_results.to_latex('figures/frozen-features-sim-metrics.tex', float_format='%.3f', escape=False, multicolumn=True, multicolumn_format='c')
+sim_results.to_latex(
+    'figures/frozen-features-sim-metrics.tex', 
+    float_format='%.3f', 
+    escape=False, 
+    multicolumn=True, 
+    multicolumn_format='c', 
+    position='h')
 
 # task_metric_results.to_csv('experiments/results_frozen_features.task', float_format='%.2f')
 task_metric_results.to_latex(
