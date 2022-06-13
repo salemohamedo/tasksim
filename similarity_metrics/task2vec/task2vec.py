@@ -101,7 +101,7 @@ class Task2Vec:
     
     def embed2(self, dataset: Dataset):
         self.compute_fisher(dataset)
-        embedding = self.extract_embedding2(self.model)
+        embedding = self.extract_embedding(self.model)
         return embedding
 
     def montecarlo_fisher(self, dataset: Dataset, epochs: int = 1):
@@ -342,7 +342,7 @@ class Task2Vec:
         """
         hess, scale = [], []
         for name, module in model.named_modules():
-            if module is model.encoder.fc:
+            if module is model.classifier:
                 continue
             # The variational Fisher approximation estimates the variance of noise that can be added to the weights
             # without increasing the error more than a threshold. The inverse of this is proportional to an

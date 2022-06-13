@@ -64,15 +64,34 @@ class NMC_Classifier(torch.nn.Module):
 
 ## Configure model
 
+def get_feature_extractor(model):
+    flatten_features = False
+    if model == "resnet":
+        full_model = models.resnet34(pretrained=True)
+        latent_dim = list(full_model.children())[-1].in_features
+        feature_extractor = torch.nn.Sequential(*list(full_model.children())[:-1])
+        flatten_features = True
+    elif model == "densenet":
+        full_model = models.densenet121(pretrained=True)
+        latent_dim = list(full_model.children())[-1].in_features
+        feature_extractor = torch.nn.Sequential(
+            *list(full_model.children())[:-1])
+        flatten_features = True
+    elif model == "vgg":
+        full_model = models.vgg16(pretrained=True)
+        latent_dim = full_model.classifier[-1].in_features
+        full_model.classifier = full_model.classifier[:-1]
+        feature_extractor = full_model
+        flatten_features = True
+    return feature_extractor, latent_dim, flatten_features
+
 class PretrainedModel(torch.nn.Module):
-    def __init__(self, device, freeze_features=False, multihead=False):
+    def __init__(self, model, device, freeze_features=False, multihead=False):
         super().__init__()
-        self.encoder = models.resnet34(pretrained=True)
-        # self.encoder = models.densenet121(pretrained=True)
-        # self.encoder.classifier
+        self.feature_extractor, self.fc_in_features, self.flatten_features = get_feature_extractor(model)
+        self.classifier = None
         self.head_size = 0
         self.device = device
-        self.fc_in_features = self.encoder.fc.in_features
         self.old_head_weights, self.old_head_bias = None, None
         self.nmc = False
         self.multihead = multihead
@@ -83,8 +102,7 @@ class PretrainedModel(torch.nn.Module):
             self.heads = torch.nn.ModuleList()
 
         if freeze_features:
-            for param in self.encoder.parameters():
-                param.requires_grad = False
+            self.freeze_features()
 
     def add_head(self, head_size):
         self.heads.append(torch.nn.Linear(self.fc_in_features, head_size, device=self.device))
@@ -92,7 +110,7 @@ class PretrainedModel(torch.nn.Module):
         # self.heads[-1] = self.heads[-1].to(self.device)
     
     def set_head(self, i):
-        self.encoder.fc = self.heads[i]
+        self.classifier = self.heads[i]
 
     def add_and_set_head(self, head_size):
         self.add_head(head_size)
@@ -100,38 +118,43 @@ class PretrainedModel(torch.nn.Module):
 
     def extend_head(self, n):
         if self.nmc == True:
-            self.encoder.fc.extend_head(n)
+            self.classifier.extend_head(n)
             return
         new_head_size = self.head_size + n
         # new_head = torch.nn.Linear(self.fc_in_features, new_head_size, bias=False)
         new_head = WeightNorm_Classifier(
             self.fc_in_features, new_head_size, bias=True)
         if self.head_size != 0:  # Save old class weights
-            self.old_head_weights = self.encoder.fc.weight.data.clone().to(self.device)
-            self.old_head_bias = self.encoder.fc.bias.data.clone().to(self.device)
-            new_head.weight.data[:self.head_size] = self.encoder.fc.weight.data.clone().to(
+            self.old_head_weights = self.classifier.weight.data.clone().to(self.device)
+            self.old_head_bias = self.classifier.bias.data.clone().to(self.device)
+            new_head.weight.data[:self.head_size] = self.classifier.weight.data.clone().to(
                 self.device)
-            new_head.bias.data[:self.head_size] = self.encoder.fc.bias.data.clone(
+            new_head.bias.data[:self.head_size] = self.classifier.bias.data.clone(
             ).to(self.device)
-        self.encoder.fc = new_head
+        self.classifier = new_head
         self.head_size = new_head_size
-        self.encoder.to(self.device)
+        self.classifier.to(self.device)
+        # self.encoder.to(self.device)
 
     def unfreeze_features(self):
-        for name, param in self.encoder.named_parameters():
-            if re.search("fc", name) is None:
-                param.requires_grad = True
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = True
 
     def freeze_features(self):
-        for name, param in self.encoder.named_parameters():
-            if re.search("fc", name) is None:
-                param.requires_grad = False
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
+    
+    def __forward(self, x):
+        out = self.feature_extractor(x)
+        if self.flatten_features:
+            out = torch.flatten(out, 1)
+        return self.classifier(out)
 
     def forward(self, x, y):
         if self.nmc or self.multihead:
-            return self.encoder(x)
+            return self.__forward(x)
         ## Apply masking
-        outs = self.encoder(x)
+        outs = self.__forward(x)
         classes_mask = torch.eye(self.head_size).cuda().float()
         label_unique = y.unique()
         ind_mask = classes_mask[label_unique].sum(0)
@@ -142,8 +165,8 @@ class PretrainedModel(torch.nn.Module):
     def configure_nmc(self):
         print(self.device)
         self.nmc = True
-        self.encoder.fc = NMC_Classifier(self.fc_in_features, self.device)
-        self.encoder.fc.to(self.device)
+        self.classifier = NMC_Classifier(self.fc_in_features, self.device)
+        self.classifier.to(self.device)
 
 def get_optimizer_lr_scheduler(optim, optim_params, lr):
     if optim == 'adam':

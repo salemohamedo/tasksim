@@ -50,6 +50,7 @@ parser.add_argument('--dataset', default="cifar-10", metavar='N', choices=DATASE
 parser.add_argument('--multihead', action='store_true')
 parser.add_argument('--wandb', action='store_true', help='Save results to wandb')
 parser.add_argument('--optim', default="sgd", metavar='N', choices=['adam', 'sgd'])
+parser.add_argument('--model', default="resnet", metavar='N', choices=['resnet', 'densenet', 'vgg'])
 args = parser.parse_args()
 print(vars(args))
 
@@ -71,7 +72,7 @@ def train(model, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn
             optim.zero_grad()
         outs = model(inputs, labels)
         if model.nmc:
-            model.encoder.fc.update_means(labels, epoch)
+            model.classifier.update_means(labels, epoch)
         loss = criterion(outs, labels)
         total_loss += loss
         if not model.nmc:
@@ -139,7 +140,10 @@ def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=F
             model.extend_head(train_taskset.nb_classes)
         optim, lr_scheduler = None, None
         if not nmc:
-            optim_params = model.encoder.fc.parameters() if args.freeze_features else model.encoder.parameters()
+            if args.freeze_features:
+                optim_params = model.classifier.parameters()
+            else:
+                optim_params = model.parameters()
             optim, lr_scheduler = get_optimizer_lr_scheduler(args.optim, optim_params, args.lr)
 
         num_epochs = 1 if nmc == True else args.num_epochs
@@ -168,9 +172,9 @@ def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=F
                               skip_layers=6).embed(train_taskset))
         elif not nmc:
             if replay_buffer == None: ## First task
-                replay_buffer = train_taskset
+                replay_buffer = ConcatDataset([train_taskset])
             else:
-                replay_buffer = ConcatDataset([replay_buffer, train_taskset])
+                replay_buffer = ConcatDataset(replay_buffer.datasets + [train_taskset])
             model.unfreeze_features()
             embeddings.append(Task2Vec(model, max_samples=1000,
                                        skip_layers=0).embed2(replay_buffer))
@@ -200,7 +204,7 @@ for scenario_id in range(args.num_permutations):
         train_scenario = scenario_generator.sample(seed=scenario_id)
     seen_perms.add(tuple(train_scenario.class_order))
     test_scenario = prepare_scenario(test_dataset, args.increment, transform, train_scenario.class_order)
-    model = PretrainedModel(device, freeze_features=args.freeze_features, multihead=args.multihead)
+    model = PretrainedModel(args.model, device, freeze_features=args.freeze_features, multihead=args.multihead)
     model = model.to(device)
     nmc_results, linear_classifier_results, embeddings = None, None, None
     linear_classifier_results, embeddings = run_cl_sequence(model, train_scenario, test_scenario)
