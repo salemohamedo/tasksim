@@ -7,17 +7,17 @@ import numpy as np
 nmc = False
 
 FROZEN_RESULT_DIRS = [
-    ("CIFAR-10",'results/run_013'),
-    ("CIFAR-100", 'results/run_014'),
-    ("MNIST", 'results/run_015'),
-    ("CUB200", 'results/run_016')
+    ("CIFAR-10",'results/old_results/run_013'),
+    ("CIFAR-100", 'results/old_results/run_014'),
+    ("MNIST", 'results/old_results/run_015'),
+    ("CUB200", 'results/old_results/run_016')
 ]
 
 MULTIHEAD_RESULT_DIRS = [
-    ("CIFAR-10", 'results/run_022'),
-    ("CIFAR-100", 'results/run_023'),
-    ("MNIST", 'results/run_024'),
-    ("CUB200", 'results/run_025')
+    ("CIFAR-10", 'results/old_results/run_022'),
+    ("CIFAR-100", 'results/old_results/run_023'),
+    ("MNIST", 'results/old_results/run_024'),
+    ("CUB200", 'results/old_results/run_025')
 ]
 
 DATASET_NAMES = OrderedDict(MULTIHEAD_RESULT_DIRS).keys()

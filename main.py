@@ -42,8 +42,7 @@ parser.add_argument('--nmc', action='store_true',
                     help='Measure NMC accuracy')
 parser.add_argument('--skip-eval', action='store_true',
                     help='Skip eval')
-parser.add_argument('--save-results', action='store_true',
-                    help='Save run results to ./results dir')
+parser.add_argument('--results-dir', help='subdirectory in ./results to save results to.')
 parser.add_argument('--increment', type=int, default=10, metavar='N')
 parser.add_argument('--num-permutations', type=int, default=1, metavar='N')
 parser.add_argument('--dataset', default="cifar-10", metavar='N', choices=DATASETS.keys())
@@ -194,10 +193,6 @@ train_dataset, test_dataset = load_dataset(args.dataset)
 train_scenario = prepare_scenario(train_dataset, args.increment, transform)
 scenario_generator = ClassOrderGenerator(train_scenario)
 seen_perms = set()
-
-run_id = get_run_id()
-
-print(f"Starting run: {run_id}")
     
 for scenario_id in range(args.num_permutations):
     while tuple(train_scenario.class_order) in seen_perms:
@@ -211,9 +206,9 @@ for scenario_id in range(args.num_permutations):
     if args.nmc:
         model.configure_nmc()
         nmc_results, _ = run_cl_sequence(model, train_scenario, test_scenario, nmc=True)
-    if args.save_results:
+    if args.results_dir is not None:
         save_results(args, linear_classifier_results, nmc_results,
-                     embeddings, run_id, scenario_id, wandb)
+                     embeddings, scenario_id, wandb)
 
 
 print(f"Total number of classes: {train_scenario.nb_classes}.")

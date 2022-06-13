@@ -4,27 +4,28 @@ import pandas as pd
 import numpy as np
 import json
 
-RESULTS_PATH = './results'
+BASE_RESULTS_PATH = './results'
 
-def get_run_id():
+def get_run_id(results_dir):
     run_id = 0
-    results_dir = Path(RESULTS_PATH)
+    results_dir = Path(BASE_RESULTS_PATH) / results_dir
     if results_dir.exists():
         id_list = [int(str(x).split("_")[-1]) for x in results_dir.iterdir()]
         run_id = 0 if not id_list else max(id_list) + 1
     return run_id
 
 
-def save_results(args, linear_results, nmc_results, embeddings, run_id, scenario_id, wandb):
+def save_results(args, linear_results, nmc_results, embeddings, scenario_id, wandb):
+    run_id = get_run_id(args.results_dir)
     if args.wandb:
         if linear_results is not None:
             wandb.run.summary[f"linear_results_seq_{scenario_id}"] = linear_results
         if nmc_results is not None:
             wandb.run.summary[f"nmc_results_seq_{scenario_id}"] = nmc_results
 
-    results_dir = Path(RESULTS_PATH)
+    results_dir = Path(BASE_RESULTS_PATH) / args.results_dir
     if not results_dir.exists():
-        results_dir.mkdir()
+        results_dir.mkdir(parents=True)
     run_dir = results_dir / f'run_{str(run_id).zfill(3)}'
     if not run_dir.exists():
         run_dir.mkdir()
