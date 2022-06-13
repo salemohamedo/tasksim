@@ -45,7 +45,7 @@ def parse_task_sim(embeddings_file: str) -> List:
         distances.append(running_distance / i)
     return distances
 
-def get_run_results(run_dir):
+def get_run_results(run_dir, nmc=True):
     run_dir = Path(run_dir)
     if not run_dir.exists():
         print(f"No Run Directory: {run_dir}")
@@ -56,20 +56,23 @@ def get_run_results(run_dir):
     id_list = [int(str(x).split("_")[-1].split(".")[0]) for x in case_list]
     num_cases = max(id_list) + 1
     print(f"\n## Total Number Cases: {num_cases}")
-    lin_accs = []
-    lin_fgts = []
-    nmc_accs = []
-    nmc_fgts = []
+    lin_accs, lin_fgts = [], []
+    if nmc:
+        nmc_accs, nmc_fgts = [], []
+    else:
+        nmc_accs, nmc_fgts = None, None
     task_sims = []
     for case_id in range(num_cases):
-        lin_accs, lin_fgts = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.lin")
-        nmc_accs, nmc_fgts = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.nmc")
-        task_sims = parse_task_sim(run_dir / f'case_{case_id}.emb')
-        lin_accs.extend(lin_accs)
-        lin_fgts.extend(lin_fgts)
-        nmc_accs.extend(nmc_accs)
-        nmc_fgts.extend(nmc_fgts)
-        task_sims.extend(task_sims)
+        print(lin_accs)
+        lin_acc, lin_fgt = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.lin")
+        if nmc:
+            nmc_acc, nmc_fgt = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.nmc")
+            nmc_accs.extend(nmc_acc)
+            nmc_fgts.extend(nmc_fgt)
+        task_sim = parse_task_sim(run_dir / f'case_{case_id}.emb')
+        lin_accs.extend(lin_acc)
+        lin_fgts.extend(lin_fgt)
+        task_sims.extend(task_sim)
     
     return lin_accs, lin_fgts, nmc_accs, nmc_fgts, task_sims
 
@@ -77,16 +80,18 @@ def process_run_results(lin_accs, lin_fgts, nmc_accs, nmc_fgts, task_sims) -> Re
     results = ResultsSummary()
     results.acc_lin = np.mean(lin_accs) * 100
     results.fgt_lin = np.mean(lin_fgts) * 100
-    results.acc_nmc = np.mean(nmc_accs) * 100
-    results.fgt_nmc = np.mean(nmc_fgts) * 100
+    if nmc_accs is not None and nmc_fgts is not None:
+        results.acc_nmc = np.mean(nmc_accs) * 100
+        results.fgt_nmc = np.mean(nmc_fgts) * 100
 
     ## Invert distances so smaller is better
     invert_task_sims = np.array(task_sims) * -1
 
     results.sim_acc_lin = pearsonr(lin_accs, invert_task_sims)[0]
     results.sim_fgt_lin = pearsonr(lin_fgts, invert_task_sims)[0]
-    results.sim_acc_nmc = pearsonr(nmc_accs, invert_task_sims)[0]
-    results.sim_fgt_nmc = pearsonr(nmc_fgts, invert_task_sims)[0]
+    if nmc_accs is not None and nmc_fgts is not None:
+        results.sim_acc_nmc = pearsonr(nmc_accs, invert_task_sims)[0]
+        results.sim_fgt_nmc = pearsonr(nmc_fgts, invert_task_sims)[0]
     return results
 
 def plot_similarity_correlation(task_metric, task_sim, task_metric_label, title, out_file):

@@ -68,6 +68,8 @@ class PretrainedModel(torch.nn.Module):
     def __init__(self, device, freeze_features=False, multihead=False):
         super().__init__()
         self.encoder = models.resnet34(pretrained=True)
+        # self.encoder = models.densenet121(pretrained=True)
+        # self.encoder.classifier
         self.head_size = 0
         self.device = device
         self.fc_in_features = self.encoder.fc.in_features
@@ -142,3 +144,16 @@ class PretrainedModel(torch.nn.Module):
         self.nmc = True
         self.encoder.fc = NMC_Classifier(self.fc_in_features, self.device)
         self.encoder.fc.to(self.device)
+
+def get_optimizer_lr_scheduler(optim, optim_params, lr):
+    if optim == 'adam':
+        # optim = torch.optim.Adam(optim_params, lr=3e-4, weight_decay=5e-4)
+        optim = torch.optim.Adam(optim_params, lr=lr, weight_decay=5e-4)
+    else:
+        optim = torch.optim.SGD(optim_params, lr=lr,
+                                    momentum=0.9, weight_decay=5e-4)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(
+            optim, step_size=7, gamma=0.1)
+    # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    #     optim, T_max=args.num_epochs)
+    return optim, lr_scheduler

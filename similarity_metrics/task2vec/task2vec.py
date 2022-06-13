@@ -124,7 +124,7 @@ class Task2Vec:
                 if self.skip_layers > 0:
                     output = self.model(data, start_from=self.skip_layers)
                 else:
-                    output = self.model(data)
+                    output = self.model(data, target)
                 # The gradients used to compute the FIM needs to be for y sampled from
                 # the model distribution y ~ p_w(y|x), not for y from the dataset
                 if self.bernoulli:
@@ -342,7 +342,7 @@ class Task2Vec:
         """
         hess, scale = [], []
         for name, module in model.named_modules():
-            if module is model.fc:
+            if module is model.encoder.fc:
                 continue
             # The variational Fisher approximation estimates the variance of noise that can be added to the weights
             # without increasing the error more than a threshold. The inverse of this is proportional to an
@@ -372,6 +372,9 @@ def _get_loader(trainset, testset=None, batch_size=64, num_workers=4, num_sample
         labels = trainset.targets
     elif hasattr(trainset, '_y'):
         labels = trainset._y
+    elif isinstance(trainset, torch.utils.data.ConcatDataset):
+        labels = torch.cat([torch.from_numpy(ds._y)
+                           for ds in trainset.datasets], dim=0)
     else:
         labels = list(trainset.tensors[1].cpu().numpy())
     num_classes = int(getattr(trainset, 'num_classes', max(labels) + 1))

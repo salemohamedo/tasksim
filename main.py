@@ -5,11 +5,12 @@ from continuum import ClassIncremental
 from continuum.generators import ClassOrderGenerator
 from continuum.tasks import split_train_val
 import torch
+from torch.utils.data import ConcatDataset
 import numpy as np, random
 
 from similarity_metrics.task2vec import Task2Vec, get_model
 from utils.dataset_utils import DATASETS, load_dataset, get_transform
-from models import PretrainedModel
+from models import PretrainedModel, get_optimizer_lr_scheduler
 from utils.utils import get_run_id, save_results
 
 import wandb
@@ -32,9 +33,9 @@ parser.add_argument('--batch-size', type=int, default=64, metavar='N',
 parser.add_argument('--test-batch-size', type=int, default=64, metavar='N',
                     help='input batch size for testing (default: 64)')
 parser.add_argument('--num-epochs', type=int, default=1, metavar='N',
-                    help='number of epochs to train (default: 1)')
-parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
-                    help='learning rate (default: 0.01)')
+                    help='number of epochs to train (default: 0.001)')
+parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
+                    help='learning rate (default: 0.001)')
 parser.add_argument('--freeze-features', action='store_true',
                     help='Only train classifier head')
 parser.add_argument('--nmc', action='store_true',
@@ -48,6 +49,7 @@ parser.add_argument('--num-permutations', type=int, default=1, metavar='N')
 parser.add_argument('--dataset', default="cifar-10", metavar='N', choices=DATASETS.keys())
 parser.add_argument('--multihead', action='store_true')
 parser.add_argument('--wandb', action='store_true', help='Save results to wandb')
+parser.add_argument('--optim', default="sgd", metavar='N', choices=['adam', 'sgd'])
 args = parser.parse_args()
 print(vars(args))
 
@@ -93,14 +95,14 @@ def evaluate(model, test_loader, criterion):
     return total_loss/len(test_loader), accuracy/len(test_loader)
 
 
-def run_train_loop(model, train_loader, test_loader, optim, lr_scheduler, criterion, num_epochs):
+def run_train_loop(model, train_loader, test_loader, optim, lr_scheduler: torch.optim.lr_scheduler.StepLR, criterion, num_epochs):
     for i in range(num_epochs):
         train(model, train_loader, optim, criterion, i)
-        if not args.skip_eval:
+        if not args.skip_eval and not model.nmc:
             loss, acc = evaluate(model, test_loader, criterion)
-            print(f"Loss: {loss:.4f}\tAcc: {acc*100:.2f}%")
-        if not model.nmc:
-            lr_scheduler.step()
+            print(f"Loss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {lr_scheduler.get_lr()}")
+        # if not model.nmc:
+        #     lr_scheduler.step()
 
 def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=False):
     ## Configure loss, optimizer, lr scheduler
@@ -109,6 +111,7 @@ def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=F
     prev_test_loaders = []
     embeddings = []
     results = np.zeros((train_scenario.nb_tasks, train_scenario.nb_tasks))
+    replay_buffer = None
     for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test_scenario)):
         print(f"\n######\t Training on task {task_id}\t ######\n")
 
@@ -134,16 +137,10 @@ def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=F
             model.add_and_set_head(train_taskset.nb_classes)
         else:
             model.extend_head(train_taskset.nb_classes)
-        # optim = torch.optim.Adam(optim_params, lr=3e-4, weight_decay=5e-4)
         optim, lr_scheduler = None, None
         if not nmc:
             optim_params = model.encoder.fc.parameters() if args.freeze_features else model.encoder.parameters()
-            optim = torch.optim.SGD(optim_params, lr=args.lr,
-                                    momentum=0.9, weight_decay=5e-4)
-            lr_scheduler = torch.optim.lr_scheduler.StepLR(
-                optim, step_size=7, gamma=0.1)
-        # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        #     optim, T_max=args.num_epochs)
+            optim, lr_scheduler = get_optimizer_lr_scheduler(args.optim, optim_params, args.lr)
 
         num_epochs = 1 if nmc == True else args.num_epochs
         ## Train and evaluate test accuracy on current task
@@ -170,9 +167,13 @@ def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=F
             embeddings.append(Task2Vec(probe_network, max_samples=1000,
                               skip_layers=6).embed(train_taskset))
         elif not nmc:
+            if replay_buffer == None: ## First task
+                replay_buffer = train_taskset
+            else:
+                replay_buffer = ConcatDataset([replay_buffer, train_taskset])
             model.unfreeze_features()
-            embeddings.append(Task2Vec(model.encoder, max_samples=1000,
-                                        skip_layers=0).embed2(train_taskset))
+            embeddings.append(Task2Vec(model, max_samples=1000,
+                                       skip_layers=0).embed2(replay_buffer))
             model.freeze_features()
     print(f"\n\nTrain time: {time.time()-start_train_time:.2f}s")
     return results, embeddings
