@@ -1,11 +1,12 @@
 import argparse
+from operator import mod
 import time
 
 from continuum import ClassIncremental
 from continuum.generators import ClassOrderGenerator
 from continuum.tasks import split_train_val
 import torch
-from torch.utils.data import ConcatDataset
+from torch.utils.data import ConcatDataset, TensorDataset
 import numpy as np, random
 
 from similarity_metrics.task2vec import Task2Vec, get_model
@@ -61,6 +62,16 @@ if args.multihead and (args.nmc or args.freeze_features):
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+def encode_features(model, data_loader):
+    x, y = [], []
+    for inputs, *labels in data_loader:
+        labels = labels[0]
+        inputs = inputs.to(device)
+        features = model.encode_features(inputs)
+        x.append(features.data.cpu().clone())
+        y.append(labels.clone())
+    return TensorDataset(torch.concat(x), torch.concat(y))
+
 def train(model, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn.CrossEntropyLoss, epoch):
     model.train()
     total_loss = 0
@@ -96,6 +107,10 @@ def evaluate(model, test_loader, criterion):
 
 
 def run_train_loop(model, train_loader, test_loader, optim, lr_scheduler: torch.optim.lr_scheduler.StepLR, criterion, num_epochs):
+    if model.frozen_features and not model.nmc: ## Pre-encode features and only train classifier
+        train_encoded_dataset = encode_features(model, train_loader)
+        train_loader = torch.utils.data.DataLoader(
+            train_encoded_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
     for i in range(num_epochs):
         train(model, train_loader, optim, criterion, i)
         if not args.skip_eval and not model.nmc:
@@ -164,6 +179,7 @@ def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=F
         prev_test_loaders.append(test_loader)
 
         # Compute task2vec embedding
+        model.set_task2vec_mode(True)
         if args.multihead:
             probe_network = get_model('resnet34', pretrained=True, num_classes=int(
                 train_taskset.nb_classes+1)).cuda()
@@ -178,6 +194,7 @@ def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=F
             embeddings.append(Task2Vec(model, max_samples=1000,
                                        skip_layers=0).embed2(replay_buffer))
             model.freeze_features()
+        model.set_task2vec_mode(False)
     print(f"\n\nTrain time: {time.time()-start_train_time:.2f}s")
     return results, embeddings
 
@@ -193,7 +210,10 @@ train_dataset, test_dataset = load_dataset(args.dataset)
 train_scenario = prepare_scenario(train_dataset, args.increment, transform)
 scenario_generator = ClassOrderGenerator(train_scenario)
 seen_perms = set()
-    
+
+if args.results_dir:
+    run_id = get_run_id(args.results_dir)
+
 for scenario_id in range(args.num_permutations):
     while tuple(train_scenario.class_order) in seen_perms:
         train_scenario = scenario_generator.sample(seed=scenario_id)
@@ -208,7 +228,7 @@ for scenario_id in range(args.num_permutations):
         nmc_results, _ = run_cl_sequence(model, train_scenario, test_scenario, nmc=True)
     if args.results_dir is not None:
         save_results(args, linear_classifier_results, nmc_results,
-                     embeddings, scenario_id, wandb)
+                     embeddings, scenario_id, wandb, run_id)
 
 
 print(f"Total number of classes: {train_scenario.nb_classes}.")

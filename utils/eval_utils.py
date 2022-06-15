@@ -55,6 +55,7 @@ def get_run_results(run_dir, nmc=True):
             case_list.append(f)
     id_list = [int(str(x).split("_")[-1].split(".")[0]) for x in case_list]
     num_cases = max(id_list) + 1
+    min_case = min(id_list)
     print(f"\n## Total Number Cases: {num_cases}")
     lin_accs, lin_fgts = [], []
     if nmc:
@@ -62,8 +63,8 @@ def get_run_results(run_dir, nmc=True):
     else:
         nmc_accs, nmc_fgts = None, None
     task_sims = []
-    for case_id in range(num_cases):
-        print(lin_accs)
+    for case_id in range(min_case, num_cases):
+        # print(lin_accs)
         lin_acc, lin_fgt = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.lin")
         if nmc:
             nmc_acc, nmc_fgt = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.nmc")

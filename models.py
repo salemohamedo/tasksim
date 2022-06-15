@@ -74,8 +74,12 @@ def get_feature_extractor(model):
     elif model == "densenet":
         full_model = models.densenet121(pretrained=True)
         latent_dim = list(full_model.children())[-1].in_features
-        feature_extractor = torch.nn.Sequential(
-            *list(full_model.children())[:-1])
+        features = list(full_model.children())[:-1]
+        features.append(torch.nn.ReLU(inplace=True))
+        features.append(torch.nn.AdaptiveAvgPool2d((1, 1)))
+        feature_extractor = torch.nn.Sequential(*features)
+        # feature_extractor = torch.nn.Sequential(
+        #     *list(full_model.children())[:-1])
         flatten_features = True
     elif model == "vgg":
         full_model = models.vgg16(pretrained=True)
@@ -95,6 +99,8 @@ class PretrainedModel(torch.nn.Module):
         self.old_head_weights, self.old_head_bias = None, None
         self.nmc = False
         self.multihead = multihead
+        self.frozen_features = freeze_features
+        self.set_task2vec_mode(False)
 
         if self.multihead:
             if freeze_features:
@@ -144,11 +150,18 @@ class PretrainedModel(torch.nn.Module):
         for param in self.feature_extractor.parameters():
             param.requires_grad = False
     
-    def __forward(self, x):
+    def encode_features(self, x):
         out = self.feature_extractor(x)
         if self.flatten_features:
             out = torch.flatten(out, 1)
-        return self.classifier(out)
+        return out
+
+    def __forward(self, x):
+        if self.frozen_features and self.training and not self.task2vec and not self.nmc:
+            return self.classifier(x)
+        else:
+            features = self.encode_features(x)
+            return self.classifier(features)
 
     def forward(self, x, y):
         if self.nmc or self.multihead:
@@ -167,6 +180,9 @@ class PretrainedModel(torch.nn.Module):
         self.nmc = True
         self.classifier = NMC_Classifier(self.fc_in_features, self.device)
         self.classifier.to(self.device)
+    
+    def set_task2vec_mode(self, mode=False):
+        self.task2vec = mode
 
 def get_optimizer_lr_scheduler(optim, optim_params, lr):
     if optim == 'adam':

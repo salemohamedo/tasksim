@@ -1,6 +1,7 @@
 RESULTS_DIR="multihead"
-BASE_ARGS="--num-epochs 10 --multihead --skip-eval --wandb --num-permutations 10 --lr 0.001 --optim sgd"
-models=("resnet" "densenet" "vgg")
+BASE_ARGS="--num-epochs 10 --multihead --skip-eval --wandb --num-permutations 5 --lr 0.001 --optim sgd"
+#models=("resnet" "densenet" "vgg")
+models=("densenet" "vgg")
 for model in ${models[@]}; do
     python main.py $BASE_ARGS --dataset cifar-10 --increment 2 --model $model --results-dir $RESULTS_DIR/$model
 

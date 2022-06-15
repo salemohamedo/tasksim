@@ -1,11 +1,12 @@
 \begin{table}[h]
 \centering
-\begin{tabular}{lrrrrrrrrrrrr}
+\begin{tabular}{lrrrrrrrrr}
 \toprule
-{} & \multicolumn{3}{c}{CIFAR-10} & \multicolumn{3}{c}{CIFAR-100} & \multicolumn{3}{c}{MNIST} & \multicolumn{3}{c}{CUB200} \\
-{} & $Acc_{LC}$ & $Forget_{LC}$ & $Acc_{NMC}$ & $Acc_{LC}$ & $Forget_{LC}$ & $Acc_{NMC}$ & $Acc_{LC}$ & $Forget_{LC}$ & $Acc_{NMC}$ & $Acc_{LC}$ & $Forget_{LC}$ & $Acc_{NMC}$ \\
+{} & \multicolumn{3}{c}{CIFAR_10} & \multicolumn{3}{c}{CIFAR_100} & \multicolumn{3}{c}{CUB200} \\
+{} & $Acc_{LC}$ & $Forget_{LC}$ & $Acc_{NMC}$ & $Acc_{LC}$ & $Forget_{LC}$ & $Acc_{NMC}$ & $Acc_{LC}$ & $Forget_{LC}$ & $Acc_{NMC}$ \\
 \midrule
-Task2Vec &     -0.093 &         0.182 &       0.086 &      0.113 &        -0.072 &       0.150 &     -0.010 &         0.059 &       0.079 &      0.108 &        -0.297 &       0.728 \\
+ResNet   &     -0.235 &        -0.346 &      -0.960 &     -0.046 &         0.087 &      -0.973 &     -0.013 &        -0.007 &      -0.893 \\
+DenseNet &     -0.185 &        -0.330 &      -0.934 &      0.057 &        -0.254 &      -0.967 &      0.093 &        -0.642 &      -0.833 \\
 \bottomrule
 \end{tabular}
 \end{table}

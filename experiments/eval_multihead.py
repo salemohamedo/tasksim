@@ -1,13 +1,29 @@
+import datasets
 from utils.eval_utils import get_run_results, process_run_results, load_config
 
+from collections import OrderedDict
 import pandas as pd
 import numpy as np
 
-nmc = True
-BASE_DIR = 'results/frozen_features'
+nmc = False
+BASE_DIR = 'results/multihead'
 DATASETS = ['CIFAR_10', 'CIFAR_100', 'CUB200']
-# MODELS = ['ResNet', 'DenseNet', 'VGG']
-MODELS = ['ResNet', 'DenseNet']
+MODELS = ['ResNet', 'DenseNet', 'VGG']
+# FROZEN_RESULT_DIRS = [
+#     ("CIFAR-10",'results/old_results/run_013'),
+#     ("CIFAR-100", 'results/old_results/run_014'),
+#     ("MNIST", 'results/old_results/run_015'),
+#     ("CUB200", 'results/old_results/run_016')
+# ]
+
+# MULTIHEAD_RESULT_DIRS = [
+#     ("CIFAR-10", 'results/old_results/run_022'),
+#     ("CIFAR-100", 'results/old_results/run_023'),
+#     ("MNIST", 'results/old_results/run_024'),
+#     ("CUB200", 'results/old_results/run_025')
+# ]
+
+# DATASET_NAMES = OrderedDict(MULTIHEAD_RESULT_DIRS).keys()
 
 all_sim_results = []
 # task_metric_results = []
@@ -49,7 +65,7 @@ sim_results.columns = pd.MultiIndex.from_product(
 
 # sim_results.to_csv('experiments/results_frozen_features.sim', float_format='%.3f')
 sim_results.to_latex(
-    'figures/frozen-features-sim-metrics.tex', 
+    'figures/multihead-sim-metrics.tex', 
     float_format='%.3f', 
     escape=False, 
     multicolumn=True, 
