@@ -3,6 +3,7 @@ from operator import mod
 import time
 
 from continuum import ClassIncremental
+from continuum.datasets import H5Dataset
 from continuum.generators import ClassOrderGenerator
 from continuum.tasks import split_train_val
 import torch
@@ -50,7 +51,7 @@ parser.add_argument('--dataset', default="cifar-10", metavar='N', choices=DATASE
 parser.add_argument('--multihead', action='store_true')
 parser.add_argument('--wandb', action='store_true', help='Save results to wandb')
 parser.add_argument('--optim', default="sgd", metavar='N', choices=['adam', 'sgd'])
-parser.add_argument('--model', default="resnet", metavar='N', choices=['resnet', 'densenet', 'vgg'])
+parser.add_argument('--model', default="resnet", metavar='N', choices=['resnet', 'densenet', 'vgg', 'RN50_clip'])
 args = parser.parse_args()
 print(vars(args))
 
@@ -108,9 +109,11 @@ def evaluate(model, test_loader, criterion):
 
 def run_train_loop(model, train_loader, test_loader, optim, lr_scheduler: torch.optim.lr_scheduler.StepLR, criterion, num_epochs):
     if model.frozen_features and not model.nmc: ## Pre-encode features and only train classifier
+        start = time.time()
         train_encoded_dataset = encode_features(model, train_loader)
         train_loader = torch.utils.data.DataLoader(
             train_encoded_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
+        print(time.time() - start)
     for i in range(num_epochs):
         train(model, train_loader, optim, criterion, i)
         if not args.skip_eval and not model.nmc:
@@ -205,11 +208,30 @@ def prepare_scenario(dataset, increment, transform, order=None):
         transformations=transform,
         class_order=order
     )
-transform = get_transform(args.dataset)
+
+
+def pre_encode_features(model, dataset):
+    data_loader = torch.utils.data.DataLoader(
+        dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
+    x, y = [], []
+    for inputs, *labels in data_loader:
+        labels = labels[0]
+        inputs = inputs.to(device)
+        features = model.encode_features(inputs)
+        x.append(features.data.cpu().numpy())
+        y.append(labels.numpy())
+    H5Dataset(np.concat(x), np.concat(y), data_path='encoded.h5')
+
+transform = get_transform(args.dataset, args.model)
 train_dataset, test_dataset = load_dataset(args.dataset)
 train_scenario = prepare_scenario(train_dataset, args.increment, transform)
 scenario_generator = ClassOrderGenerator(train_scenario)
 seen_perms = set()
+
+# model = PretrainedModel(
+#     args.model, device, freeze_features=args.freeze_features, multihead=args.multihead)
+# model = model.to(device)
+# pre_encode_features(model, train_dataset)
 
 if args.results_dir:
     run_id = get_run_id(args.results_dir)

@@ -1,6 +1,7 @@
 import torch
-from torchvision import models
+from torchvision import models, transforms
 import re
+import clip
 
 class WeightNorm_Classifier(torch.nn.Module):
     def __init__(self, in_dim, n_classes, bias=False):
@@ -16,7 +17,7 @@ class WeightNorm_Classifier(torch.nn.Module):
         torch.nn.init.kaiming_normal_(self.weight)  # weight init
 
     def forward(self, x, *args, **kwargs):
-        return torch.nn.functional.linear(x, self.weight / torch.norm(self.weight, dim=1, keepdim=True), self.bias)
+        return torch.nn.functional.linear(x.float(), self.weight / torch.norm(self.weight, dim=1, keepdim=True), self.bias)
         # return torch.nn.functional.linear(x, self.weight, self.bias)
 
 class NMC_Classifier(torch.nn.Module):
@@ -64,10 +65,10 @@ class NMC_Classifier(torch.nn.Module):
 
 ## Configure model
 
-def get_feature_extractor(model):
+def get_feature_extractor(model, device):
     flatten_features = False
     if model == "resnet":
-        full_model = models.resnet34(pretrained=True)
+        full_model = models.resnet50(pretrained=True)
         latent_dim = list(full_model.children())[-1].in_features
         feature_extractor = torch.nn.Sequential(*list(full_model.children())[:-1])
         flatten_features = True
@@ -87,12 +88,22 @@ def get_feature_extractor(model):
         full_model.classifier = full_model.classifier[:-1]
         feature_extractor = full_model
         flatten_features = True
+    elif "clip" in model:
+        clip_model_name = model.split('_')[0]
+        feature_extractor, clip_transforms = clip.load(clip_model_name, device=device)
+        image = clip_transforms(transforms.ToPILImage()(
+            torch.Tensor(torch.ones(3, 224, 224)))).unsqueeze(0).to(device)
+        feature_extractor.eval()
+        with torch.no_grad():
+            latent_dim = feature_extractor.encode_image(image).shape[1]
+        flatten_features = True
     return feature_extractor, latent_dim, flatten_features
 
 class PretrainedModel(torch.nn.Module):
     def __init__(self, model, device, freeze_features=False, multihead=False):
         super().__init__()
-        self.feature_extractor, self.fc_in_features, self.flatten_features = get_feature_extractor(model)
+        self.feature_extractor, self.fc_in_features, self.flatten_features  = get_feature_extractor(model, device)
+        self.is_clip = True if "clip" in model else False
         self.classifier = None
         self.head_size = 0
         self.device = device
@@ -151,7 +162,10 @@ class PretrainedModel(torch.nn.Module):
             param.requires_grad = False
     
     def encode_features(self, x):
-        out = self.feature_extractor(x)
+        if self.is_clip:
+            out = self.feature_extractor.encode_image(x)
+        else:
+            out = self.feature_extractor(x)
         if self.flatten_features:
             out = torch.flatten(out, 1)
         return out
