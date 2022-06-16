@@ -63,16 +63,6 @@ if args.multihead and (args.nmc or args.freeze_features):
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def encode_features(model, data_loader):
-    x, y = [], []
-    for inputs, *labels in data_loader:
-        labels = labels[0]
-        inputs = inputs.to(device)
-        features = model.encode_features(inputs)
-        x.append(features.data.cpu().clone())
-        y.append(labels.clone())
-    return TensorDataset(torch.concat(x), torch.concat(y))
-
 def train(model, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn.CrossEntropyLoss, epoch):
     model.train()
     total_loss = 0
@@ -106,6 +96,15 @@ def evaluate(model, test_loader, criterion):
             total_loss += loss
     return total_loss/len(test_loader), accuracy/len(test_loader)
 
+def encode_features(model, data_loader):
+    x, y = [], []
+    for inputs, *labels in data_loader:
+        labels = labels[0]
+        inputs = inputs.to(device)
+        features = model.encode_features(inputs)
+        x.append(features.data.cpu().clone())
+        y.append(labels.clone())
+    return TensorDataset(torch.concat(x), torch.concat(y))
 
 def run_train_loop(model, train_loader, test_loader, optim, lr_scheduler: torch.optim.lr_scheduler.StepLR, criterion, num_epochs):
     if model.frozen_features and not model.nmc: ## Pre-encode features and only train classifier
