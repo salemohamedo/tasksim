@@ -1,30 +1,21 @@
 from pathlib import Path
 from scipy.stats import pearsonr
-import pickle
 import pandas as pd
 import numpy as np
-import json
-from similarity_metrics.task2vec import cosine
-from dataclasses import dataclass
-import matplotlib.pyplot as plt
+import torch
+from torch.nn.functional import cosine_similarity
 from typing import List
-plt.style.use('seaborn-whitegrid')
+import math
+from utils.dataset_utils import DATASETS
+from utils.task2vec_utils import cos_similarity
+import json
 
-@dataclass
-class ResultsSummary:
-    acc_lin: float = None
-    fgt_lin: float = None
-    acc_nmc: float = None
-    fgt_nmc: float = None
-    sim_acc_lin: float = None
-    sim_fgt_lin: float = None
-    sim_acc_nmc: float = None
-    sim_fgt_nmc: float = None
 
-def parse_acc_forgetting(results_file: str) -> List:
-    results = pd.read_csv(results_file)
-    results = results.to_numpy()
-    results = results[:,1:]
+def rounddown(x):
+    return int(math.floor(x / 10.0)) * 10
+
+
+def parse_acc_forgetting(results) -> List:
     mean_accs = []
     mean_fgts = []
     num_tasks = results.shape[0]
@@ -35,75 +26,155 @@ def parse_acc_forgetting(results_file: str) -> List:
         mean_fgts.append(mean_fgt)
     return mean_accs, mean_fgts
 
-def parse_task_sim(embeddings_file: str) -> List:
-    with open(embeddings_file, 'rb') as f:
-        embeddings = pickle.load(f)
-    running_distance = 0
-    distances = []
-    for i in range(1, len(embeddings)):
-        running_distance += cosine(embeddings[i - 1], embeddings[i])
-        distances.append(running_distance / i)
-    return distances
 
-def get_run_results(run_dir, nmc=True):
-    run_dir = Path(run_dir)
-    if not run_dir.exists():
-        print(f"No Run Directory: {run_dir}")
-    case_list = []
-    for f in run_dir.iterdir():
-        if str(f).find("case") > -1:
-            case_list.append(f)
-    id_list = [int(str(x).split("_")[-1].split(".")[0]) for x in case_list]
-    num_cases = max(id_list) + 1
-    min_case = min(id_list)
-    print(f"\n## Total Number Cases: {num_cases}")
-    lin_accs, lin_fgts = [], []
-    if nmc:
-        nmc_accs, nmc_fgts = [], []
-    else:
-        nmc_accs, nmc_fgts = None, None
-    task_sims = []
-    for case_id in range(min_case, num_cases):
-        # print(lin_accs)
-        lin_acc, lin_fgt = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.lin")
-        if nmc:
-            nmc_acc, nmc_fgt = parse_acc_forgetting(run_dir / f"case_{case_id}.acc.nmc")
-            nmc_accs.extend(nmc_acc)
-            nmc_fgts.extend(nmc_fgt)
-        task_sim = parse_task_sim(run_dir / f'case_{case_id}.emb')
-        lin_accs.extend(lin_acc)
-        lin_fgts.extend(lin_fgt)
-        task_sims.extend(task_sim)
-    
-    return lin_accs, lin_fgts, nmc_accs, nmc_fgts, task_sims
+def parse_task_vecs(embeddings, idx, type='linear') -> List:
+    norm_sims = []
+    sims = []
+    norm_old = []
+    norm_new = []
+    for i in range(len(embeddings)):
+        if type == 'linear':
+            old_emb = embeddings[i]['linear_old_vec']
+            new_emb = embeddings[i]['linear_new_vec']
+        else:
+            old_emb = embeddings[i]['prototype_old_vec']
+            new_emb = embeddings[i]['prototype_new_vec']
+        old_emb = old_emb[idx[0]:idx[1]]
+        new_emb = new_emb[idx[0]:idx[1]]
 
-def process_run_results(lin_accs, lin_fgts, nmc_accs, nmc_fgts, task_sims) -> ResultsSummary:
-    results = ResultsSummary()
-    results.acc_lin = np.mean(lin_accs) * 100
-    results.fgt_lin = np.mean(lin_fgts) * 100
-    if nmc_accs is not None and nmc_fgts is not None:
-        results.acc_nmc = np.mean(nmc_accs) * 100
-        results.fgt_nmc = np.mean(nmc_fgts) * 100
+        sims.append(cos_similarity(old_emb, new_emb, norm=False))
+        norm_sims.append(cos_similarity(old_emb, new_emb, norm=True))
+        norm_old.append(torch.linalg.norm(old_emb).cpu())
+        norm_new.append(torch.linalg.norm(new_emb).cpu())
+    return np.array(sims), np.array(norm_sims), np.array(norm_old), np.array(norm_new)
 
-    ## Invert distances so smaller is better
-    invert_task_sims = np.array(task_sims) * -1
 
-    results.sim_acc_lin = pearsonr(lin_accs, invert_task_sims)[0]
-    results.sim_fgt_lin = pearsonr(lin_fgts, invert_task_sims)[0]
-    if nmc_accs is not None and nmc_fgts is not None:
-        results.sim_acc_nmc = pearsonr(nmc_accs, invert_task_sims)[0]
-        results.sim_fgt_nmc = pearsonr(nmc_fgts, invert_task_sims)[0]
-    return results
+def load_results(run_dir: Path, load_embeddings=True):
+    results = pd.read_csv(run_dir / 'results.csv')
+    results = results.to_numpy()
+    results = results[:, 1:]
+    if run_dir.name == 'nmc':
+        run_dir = str(run_dir.absolute())
+        run_dir = run_dir.replace("nmc", "linear")
+    embeddings = None
+    if load_embeddings:
+        embeddings = torch.load(f'{run_dir}/embeddings.pt')
+    return results, embeddings
 
-def plot_similarity_correlation(task_metric, task_sim, task_metric_label, title, out_file):
-    assert len(task_metric) == len(task_sim)
-    plt.scatter(task_sim, task_metric, marker='o')
-    plt.xlabel("Task dissimilarity")
-    plt.ylabel(task_metric_label)
-    plt.title(title)
-    plt.savefig(out_file)
+# MODEL_FE_PARAMS = {
+#     'resnet': rounddown(23508032),
+#     'densenet': rounddown(6953856)
+# }
 
-def load_config(run_dir):
-    run_dir = Path(run_dir)
-    with open(run_dir / 'config.txt', 'r') as config_fp:
-        return json.load(config_fp)
+
+def get_corr_layers(model):
+    path = str(Path('config') / model) + '.json'
+    with open(path, 'r') as f:
+        model_layer_to_idx = json.load(f)
+    model_layer_to_idx = list(model_layer_to_idx.items())
+    model_layer_to_idx.sort(key=lambda x: x[1])  # Sort by idx
+    assert 'classifier' in model_layer_to_idx[-1][0].lower()
+    all_features_idx = [model_layer_to_idx[0][1], model_layer_to_idx[-1][1]]
+    final_layer_idx = [model_layer_to_idx[-2][1], model_layer_to_idx[-1][1]]
+    return [
+        ('all', all_features_idx),
+        ('final', final_layer_idx)
+    ]
+
+
+def evaluate_results(args, results, embeddings, sim_metrics):
+    accs, fgts = parse_acc_forgetting(results)
+    cl_acc = accs[-1]
+    iid_accs = [results[i][i] for i in range(args.n_tasks)]
+    mean_fgt = fgts[-1]
+    summary = dict(
+        cl_acc=cl_acc,
+        mean_iid_acc=np.mean(iid_accs),
+        mean_fgt=mean_fgt,
+        all_cl_accs=accs, 
+        all_fgts=fgts,
+        all_iid_accs=iid_accs
+    )
+    if embeddings:
+        for (layer, idx) in get_corr_layers(args.model):
+            sims, norm_sims, norm_old, norm_new = parse_task_vecs(
+                embeddings, idx,  'linear')
+            summary[f'metric_{layer}_sims'] = sims
+            summary[f'metric_{layer}_norm_sims'] = norm_sims
+            summary[f'metric_{layer}_norm_old'] = norm_old
+            summary[f'metric_{layer}_norm_new'] = norm_new
+    if sim_metrics:
+        for s in sim_metrics:
+            for m in s.keys():
+                metric = f'metric_{m}'
+                if metric not in summary:
+                    summary[metric] = []
+                summary[metric].append(s[m])
+    return summary
+
+
+def get_corr_stats(sim_type, embeddings, model, dataset, seed, head_type, accs, fgts, transfer=None):
+    corr_stats = []
+    for (layer, idx) in get_corr_layers(model):
+        sims, norm_old, norm_new, running_sims = parse_task_vecs(
+            embeddings, sim_type, idx)
+        corr_acc, corr_acc_p = pearsonr(accs, running_sims)
+        corr_fgt, corr_fgt_p = pearsonr(fgts, running_sims)
+        stats = {
+            'corr_acc': corr_acc,
+            'corr_acc_p': corr_acc_p,
+            'corr_fgt': corr_fgt,
+            'corr_fgt_p': corr_fgt_p,
+            'head_type': head_type,
+            'layer': layer,
+            'dataset': dataset,
+            'seed': seed,
+            'model': model,
+            'sim_type': sim_type,
+            'sims': sims,
+            'norm_old': norm_old,
+            'norm_new': norm_new,
+            'running_sims': running_sims
+        }
+        if transfer is not None:
+            stats['corr_transfer'] = pearsonr(transfer, running_sims)[0]
+        corr_stats.append(stats)
+    return corr_stats
+
+
+def process_results(base_dir, init):
+    base_dir = Path(base_dir)
+    perf_stats = []
+    corr_stats = []
+    for dataset in [d for d in list(base_dir.iterdir()) if d.name in DATASETS.keys()]:
+        for model in dataset.iterdir():
+            for seed in model.iterdir():
+                for type in seed.iterdir():
+                    results, embeddings = load_results(
+                        type.absolute(), load_embeddings=(not init))
+                    # fix_embeddings(embeddings, model.name)
+                    accs, fgts = parse_acc_forgetting(results)
+                    perf_stats.append({
+                        'model': model.name,
+                        'seed': seed.name,
+                        'head_type': type.name,
+                        'dataset': dataset.name,
+                        'final_mean_acc': accs[-1],
+                        'final_mean_fgt': fgts[-1]
+                    })
+                    if not init:
+                        for sim_type in ['linear']:
+                            corr_stats.extend(get_corr_stats(
+                                sim_type=sim_type,
+                                embeddings=embeddings,
+                                model=model.name,
+                                dataset=dataset.name,
+                                seed=seed.name,
+                                head_type=type.name,
+                                accs=accs,
+                                fgts=fgts))
+    pd.to_pickle(pd.DataFrame(perf_stats),
+                 base_dir / 'results/perf_results.pk')
+    if not init:
+        pd.to_pickle(pd.DataFrame(corr_stats),
+                     base_dir / 'results/corr_results.pk')

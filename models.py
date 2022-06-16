@@ -3,6 +3,11 @@ from torchvision import models, transforms
 import re
 import clip
 
+CLIP_MODEL_NAME_DICT = {
+    'resnet_clip' : 'RN50',
+    'vit_clip': 'ViT-B/16'
+}
+
 class WeightNorm_Classifier(torch.nn.Module):
     def __init__(self, in_dim, n_classes, bias=False):
         super().__init__()
@@ -14,11 +19,16 @@ class WeightNorm_Classifier(torch.nn.Module):
             self.bias = None
 
         # initialize weights
-        torch.nn.init.kaiming_normal_(self.weight)  # weight init
+        self.init_weights()
+    
+    def init_weights(self):
+        torch.nn.init.kaiming_normal_(self.weight)
+        if self.bias is not None:
+            self.bias = torch.nn.Parameter(torch.zeros(self.size_out))
 
     def forward(self, x, *args, **kwargs):
-        return torch.nn.functional.linear(x.float(), self.weight / torch.norm(self.weight, dim=1, keepdim=True), self.bias)
-        # return torch.nn.functional.linear(x, self.weight, self.bias)
+        # return torch.nn.functional.linear(x.float(), self.weight / torch.norm(self.weight, dim=1, keepdim=True), self.bias)
+        return torch.nn.functional.linear(x, self.weight, self.bias)
 
 class NMC_Classifier(torch.nn.Module):
     def __init__(self, in_dim, device):
@@ -38,6 +48,11 @@ class NMC_Classifier(torch.nn.Module):
             self.class_means = torch.cat((self.class_means, torch.zeros(n, self.in_dim, device=self.device)))
             self.class_counts = torch.cat((self.class_counts, torch.zeros(n, device=self.device)))
         self.out_dim += n
+        return self.out_dim
+
+    def init_weights(self):
+        self.class_means = torch.zeros((self.out_dim, self.in_dim), device=self.device)
+        self.class_counts = torch.zeros(self.out_dim, device=self.device)
 
     def update_means(self, y, epoch):
         if epoch > 0: ## Only need to update once
@@ -53,6 +68,7 @@ class NMC_Classifier(torch.nn.Module):
         
 
     def forward(self, x):
+        x = x.detach()
         self.x = x
         if self.initiated:
             out = torch.cdist(x, self.class_means)
@@ -65,15 +81,15 @@ class NMC_Classifier(torch.nn.Module):
 
 ## Configure model
 
-def get_feature_extractor(model, device):
+def get_feature_extractor(model, device, pretrained):
     flatten_features = False
     if model == "resnet":
-        full_model = models.resnet50(pretrained=True)
+        full_model = models.resnet18(pretrained=pretrained)
         latent_dim = list(full_model.children())[-1].in_features
         feature_extractor = torch.nn.Sequential(*list(full_model.children())[:-1])
         flatten_features = True
     elif model == "densenet":
-        full_model = models.densenet121(pretrained=True)
+        full_model = models.densenet121(pretrained=pretrained)
         latent_dim = list(full_model.children())[-1].in_features
         features = list(full_model.children())[:-1]
         features.append(torch.nn.ReLU(inplace=True))
@@ -83,13 +99,20 @@ def get_feature_extractor(model, device):
         #     *list(full_model.children())[:-1])
         flatten_features = True
     elif model == "vgg":
-        full_model = models.vgg16(pretrained=True)
+        full_model = models.vgg11(pretrained=pretrained)
         latent_dim = full_model.classifier[-1].in_features
         full_model.classifier = full_model.classifier[:-1]
         feature_extractor = full_model
         flatten_features = True
+    elif model == "vit":
+        full_model = models.vit_b_16(pretrained=pretrained)
+        latent_dim = list(full_model.heads.children())[-1].in_features
+        feature_extractor = full_model.encoder
+        flatten_features = True
     elif "clip" in model:
-        clip_model_name = model.split('_')[0]
+        if pretrained == False:
+            raise ValueError("All clip models are already pretrained!")
+        clip_model_name = CLIP_MODEL_NAME_DICT[model]
         feature_extractor, clip_transforms = clip.load(clip_model_name, device=device)
         image = clip_transforms(transforms.ToPILImage()(
             torch.Tensor(torch.ones(3, 224, 224)))).unsqueeze(0).to(device)
@@ -99,27 +122,33 @@ def get_feature_extractor(model, device):
         flatten_features = True
     return feature_extractor, latent_dim, flatten_features
 
-class PretrainedModel(torch.nn.Module):
-    def __init__(self, model, device, freeze_features=False, multihead=False):
+class TasksimModel(torch.nn.Module):
+    def __init__(self, model, device, freeze_features=False, multihead=False, pretrained=True, nmc=False, no_masking=False):
         super().__init__()
-        self.feature_extractor, self.fc_in_features, self.flatten_features  = get_feature_extractor(model, device)
+        self.feature_extractor, self.fc_in_features, self.flatten_features = get_feature_extractor(
+            model, device, pretrained)
         self.is_clip = True if "clip" in model else False
         self.classifier = None
         self.head_size = 0
         self.device = device
+        self.nmc = nmc
         self.old_head_weights, self.old_head_bias = None, None
-        self.nmc = False
         self.multihead = multihead
         self.frozen_features = freeze_features
         self.set_task2vec_mode(False)
+        self.no_masking = no_masking
 
         if self.multihead:
             if freeze_features:
                 raise ValueError("Don't use frozen model with multihead setup")
             self.heads = torch.nn.ModuleList()
 
-        if freeze_features:
+        if self.frozen_features:
             self.freeze_features()
+        
+        if self.nmc:
+            self.classifier = NMC_Classifier(self.fc_in_features, self.device)
+            self.classifier.to(self.device)
 
     def add_head(self, head_size):
         self.heads.append(torch.nn.Linear(self.fc_in_features, head_size, device=self.device))
@@ -135,7 +164,7 @@ class PretrainedModel(torch.nn.Module):
 
     def extend_head(self, n):
         if self.nmc == True:
-            self.classifier.extend_head(n)
+            self.head_size = self.classifier.extend_head(n)
             return
         new_head_size = self.head_size + n
         # new_head = torch.nn.Linear(self.fc_in_features, new_head_size, bias=False)
@@ -161,7 +190,7 @@ class PretrainedModel(torch.nn.Module):
         for param in self.feature_extractor.parameters():
             param.requires_grad = False
     
-    def encode_features(self, x):
+    def encode_features(self, x) -> torch.Tensor:
         if self.is_clip:
             out = self.feature_extractor.encode_image(x)
         else:
@@ -171,16 +200,19 @@ class PretrainedModel(torch.nn.Module):
         return out
 
     def __forward(self, x):
-        if self.frozen_features and self.training and not self.task2vec and not self.nmc:
+        if self.frozen_features and self.training and not self.task2vec:
             return self.classifier(x)
         else:
             features = self.encode_features(x)
+            if self.is_clip:
+                features = features.float()
             return self.classifier(features)
 
-    def forward(self, x, y):
-        if self.nmc or self.multihead:
+    def forward(self, x, y=None):
+        if self.nmc or self.multihead or self.task2vec or not self.training or self.no_masking:
             return self.__forward(x)
         ## Apply masking
+        assert y is not None
         outs = self.__forward(x)
         classes_mask = torch.eye(self.head_size).cuda().float()
         label_unique = y.unique()
@@ -188,23 +220,15 @@ class PretrainedModel(torch.nn.Module):
         full_mask = ind_mask.unsqueeze(0).repeat(outs.shape[0], 1)
         outs = torch.mul(outs, full_mask)
         return outs
-    
-    def configure_nmc(self):
-        print(self.device)
-        self.nmc = True
-        self.classifier = NMC_Classifier(self.fc_in_features, self.device)
-        self.classifier.to(self.device)
-    
+        
     def set_task2vec_mode(self, mode=False):
         self.task2vec = mode
 
-def get_optimizer_lr_scheduler(optim, optim_params, lr):
+def get_optimizer_lr_scheduler(optim, optim_params, lr, momentum):
     if optim == 'adam':
-        # optim = torch.optim.Adam(optim_params, lr=3e-4, weight_decay=5e-4)
-        optim = torch.optim.Adam(optim_params, lr=lr, weight_decay=5e-4)
+        optim = torch.optim.Adam(optim_params, lr=lr, weight_decay=2e-4)
     else:
-        optim = torch.optim.SGD(optim_params, lr=lr,
-                                    momentum=0.9, weight_decay=5e-4)
+        optim = torch.optim.SGD(optim_params, lr=lr,momentum=momentum, weight_decay=5e-4)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(
             optim, step_size=7, gamma=0.1)
     # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(

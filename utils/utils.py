@@ -3,38 +3,55 @@ import pickle
 import pandas as pd
 import numpy as np
 import json
+import torch
+import random
+import torch
+from utils.tasksim_args import TaskSimArgs
 
 BASE_RESULTS_PATH = './results'
 
-def get_run_id(results_dir):
-    run_id = 0
-    results_dir = Path(BASE_RESULTS_PATH) / results_dir
-    if results_dir.exists():
-        id_list = [int(str(x).split("_")[-1]) for x in results_dir.iterdir()]
-        run_id = 0 if not id_list else max(id_list) + 1
-    return run_id
+def get_full_results_dir(args: TaskSimArgs):
+    run_id = args.get_run_id()
+    if args.results_dir == None:
+        results_dir = Path(run_id)
+    else:
+        results_dir = Path(args.results_dir) / run_id
+    return Path(BASE_RESULTS_PATH) / results_dir
 
+def get_model_state_dict(args, task_id): 
+    results_dir = get_full_results_dir(args)
+    path = results_dir / f'fe_ckpt_task_{task_id}.pt'
+    path = Path(str(path).replace('nmc', 'linear'))
+    if path.exists():
+        return torch.load(path)
+    else:
+        return None
 
-def save_results(args, linear_results, nmc_results, embeddings, scenario_id, wandb, run_id):
-    if args.wandb:
-        if linear_results is not None:
-            wandb.run.summary[f"linear_results_seq_{scenario_id}"] = linear_results
-        if nmc_results is not None:
-            wandb.run.summary[f"nmc_results_seq_{scenario_id}"] = nmc_results
-
-    results_dir = Path(BASE_RESULTS_PATH) / args.results_dir
+def save_model(args, state_dict, task_id):
+    results_dir = get_full_results_dir(args)
     if not results_dir.exists():
         results_dir.mkdir(parents=True)
-    run_dir = results_dir / f'run_{str(run_id).zfill(3)}'
-    if not run_dir.exists():
-        run_dir.mkdir()
-        with open(run_dir / 'config.txt', 'w') as config:
-            json.dump(vars(args), config)
-    if linear_results is not None:
-        linear_df = pd.DataFrame(linear_results)
-        linear_df.to_csv(run_dir / f'case_{scenario_id}.acc.lin', float_format='%.3f')
-    if nmc_results is not None:
-        nmc_df = pd.DataFrame(nmc_results)
-        nmc_df.to_csv(run_dir / f'case_{scenario_id}.acc.nmc', float_format='%.3f')
-    with open(run_dir / f'case_{scenario_id}.emb', 'wb') as f:
-        pickle.dump(embeddings, f, protocol=pickle.HIGHEST_PROTOCOL)
+    torch.save(state_dict, results_dir / f'fe_ckpt_task_{task_id}.pt')
+
+def save_results(args: TaskSimArgs, results, embeddings):
+    results_dir = get_full_results_dir(args)
+    if not results_dir.exists():
+        results_dir.mkdir(parents=True)
+
+    with open(results_dir / 'config.txt', 'w') as config:
+        json.dump(vars(args), config, indent=2)
+    if results is not None:
+        results.to_csv(results_dir / 'results.csv', float_format='%.5f')
+    if args.save_embeddings and embeddings is not None and len(embeddings) > 0:
+        torch.save(embeddings, results_dir / 'embeddings.pt')
+
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(seed)
+    random.seed(seed)

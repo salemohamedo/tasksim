@@ -1,0 +1,47 @@
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - --wandb
+method: grid
+metric:
+  goal: maximize
+  name: cl_acc
+parameters:
+  dataset:
+    values: [cifar-100, cifar-10]
+  model:
+    value: resnet
+  multihead:
+    value: false
+  n_tasks:
+    value: 5
+  head_type:
+    value: linear
+  num_epochs:
+    value: 100
+  patience:
+    value: 20
+  optim:
+    value: sgd
+  lr:
+    value: 0.001
+  batch_size:
+    value: 64
+  task2vec_epochs:
+    value: 10
+  save_feature_extractor:
+    value: false
+  save_results:
+    value: false
+  replay_size_per_class:
+    values: [0, 5, 10, 20, 50, 100, 200]
+  wandb:
+    value: true
+  seed:
+    values: [0, 1, 2]
+  sweep_overwrite:
+    value: false
+  task2vec:
+    value: false
+program: main.py

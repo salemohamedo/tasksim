@@ -1,0 +1,88 @@
+E2E_FT:
+	cifar-10:
+		densenet:
+			batch_size: 16
+			lr: 0.001
+		resnet:
+			batch_size: 32
+			lr: 0.001
+	cifar-100:
+		densenet:
+			batch_size: 16
+			lr: 0.001
+		resnet:
+			batch_size: 16
+			lr: 0.001
+	cub200:
+		densenet:
+			batch_size: 16
+			lr: 0.01
+		resnet:
+			batch_size: 16
+			lr: 0.01
+	mnist:
+		resnet:
+			batch_size: 32
+			lr: 0.001		
+		densenet:
+			batch_size: 32
+			lr: 0.001
+E2E_Replay:
+	cifar-10:
+		densenet:
+			batch_size: 16
+			lr: 0.001
+		resnet:
+			batch_size: 32
+			lr: 0.1
+	cifar-100:
+		densenet:
+			batch_size: 16
+			lr: 0.001
+		resnet:
+			batch_size: 16
+			lr: 0.01
+	cub200:
+		densenet:
+			batch_size: 32
+			lr: 0.01
+		resnet:
+			batch_size: 16
+			lr: 0.01
+	mnist:
+		resnet:
+			batch_size: 32
+			lr: 0.001		
+		densenet:
+			batch_size: 32
+			lr: 0.001
+Frozen_FT:
+	cifar-10:
+		densenet:
+			batch_size: 32
+			lr: 0.1
+		resnet:
+			batch_size: 32
+			lr: 0.01
+	cifar-100:
+		densenet:
+			batch_size: 16
+			lr: 0.001
+		resnet:
+			batch_size: 16
+			lr: 0.001
+	cub200:
+		densenet:
+			batch_size: 16
+			lr: 0.01
+		resnet:
+			batch_size: 16
+			lr: 0.1
+	mnist:
+		densenet:
+			batch_size: 16
+			lr: 0.01
+		resnet:
+			batch_size: 32
+			lr: 0.01
+

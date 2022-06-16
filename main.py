@@ -1,258 +1,412 @@
-import argparse
-from operator import mod
+from pathlib import Path
+from dataclasses import asdict
 import time
 
-from continuum import ClassIncremental
-from continuum.datasets import H5Dataset
-from continuum.generators import ClassOrderGenerator
+from continuum import ClassIncremental, rehearsal, ContinualScenario
 from continuum.tasks import split_train_val
 import torch
 from torch.utils.data import ConcatDataset, TensorDataset
-import numpy as np, random
+import numpy as np
+import math
+import pandas as pd
+from copy import deepcopy
 
-from similarity_metrics.task2vec import Task2Vec, get_model
-from utils.dataset_utils import DATASETS, load_dataset, get_transform
-from models import PretrainedModel, get_optimizer_lr_scheduler
-from utils.utils import get_run_id, save_results
+from utils.dataset_utils import DATASETS, load_dataset, get_transform, get_dataset_class_names
+from utils.dataset_classes import CIFAR10_taxonomy
+from models import TasksimModel, get_optimizer_lr_scheduler
+from utils.utils import get_model_state_dict, get_full_results_dir, set_seed, save_results, save_model
+from utils.task2vec_utils import task2vec, cos_similarity
+from utils.tasksim_args import TaskSimArgs, parse_args
+from utils.eval_utils import evaluate_results
+from metrics import compute_metrics
 
 import wandb
 
-very_start = time.time()
+def train(model: TasksimModel, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn.CrossEntropyLoss, epoch, optim_type, task_id):
+    model.train()
+    total_loss = 0.
+    accuracy = 0
+    for i, (inputs, *labels) in enumerate(train_loader):
+        labels = labels[0]
+        inputs, labels = inputs.to(model.device), labels.to(model.device)
+        if not model.nmc:
+            optim.zero_grad()
+        outs = model(inputs, labels)
+        if model.nmc:
+            model.classifier.update_means(labels.detach(), epoch)
+        loss = criterion(outs, labels)
+        total_loss += float(loss)
+        if not model.nmc:
+            loss.backward()
+            # if optim_type == 'adam':
+            #     torch.nn.utils.clip_grad_norm(model.parameters(), 1)
+            optim.step()
+        accuracy += torch.sum(outs.max(1)
+                                  [1] == labels).float() / len(labels)
+        total_loss += float(loss)
+    return total_loss/len(train_loader), accuracy/len(train_loader)
 
-## REMOVE DETERMINISM
-torch.manual_seed(0)
-torch.backends.cudnn.deterministic = True
-def seed_worker(worker_id):
-    np.random.seed(0)
-    random.seed(0)
-g = torch.Generator()
-g.manual_seed(0)
-## REMOVE DETERMINISM
-
-parser = argparse.ArgumentParser(description='Tasksim Example')
-parser.add_argument('--batch-size', type=int, default=64, metavar='N',
-                    help='input batch size for training (default: 32)')
-parser.add_argument('--test-batch-size', type=int, default=64, metavar='N',
-                    help='input batch size for testing (default: 64)')
-parser.add_argument('--num-epochs', type=int, default=1, metavar='N',
-                    help='number of epochs to train (default: 0.001)')
-parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
-                    help='learning rate (default: 0.001)')
-parser.add_argument('--freeze-features', action='store_true',
-                    help='Only train classifier head')
-parser.add_argument('--nmc', action='store_true',
-                    help='Measure NMC accuracy')
-parser.add_argument('--skip-eval', action='store_true',
-                    help='Skip eval')
-parser.add_argument('--results-dir', help='subdirectory in ./results to save results to.')
-parser.add_argument('--increment', type=int, default=10, metavar='N')
-parser.add_argument('--num-permutations', type=int, default=1, metavar='N')
-parser.add_argument('--dataset', default="cifar-10", metavar='N', choices=DATASETS.keys())
-parser.add_argument('--multihead', action='store_true')
-parser.add_argument('--wandb', action='store_true', help='Save results to wandb')
-parser.add_argument('--optim', default="sgd", metavar='N', choices=['adam', 'sgd'])
-parser.add_argument('--model', default="resnet", metavar='N', choices=['resnet', 'densenet', 'vgg', 'RN50_clip'])
-args = parser.parse_args()
-print(vars(args))
-
-if args.wandb:
-    wandb.init(project="CL-Similarity", entity="clip_cl", config=args)
-
-if args.multihead and (args.nmc or args.freeze_features):
-    raise ValueError("Can't enable multihead and (freeze features/nmc)")
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+def evaluate(model: TasksimModel, test_loader, criterion):
+    model.eval()
+    total_loss = 0.
+    accuracy = 0
+    with torch.no_grad():
+        for inputs, *labels in test_loader:
+            labels = labels[0]
+            inputs, labels = inputs.to(model.device), labels.to(model.device)
+            outs = model(inputs)
+            loss = criterion(outs, labels)
+            accuracy += torch.sum(outs.max(1)
+                                  [1] == labels).float() / len(labels)
+            total_loss += float(loss)
+    return total_loss/len(test_loader), accuracy/len(test_loader)
 
 def encode_features(model, data_loader):
     x, y = [], []
     for inputs, *labels in data_loader:
         labels = labels[0]
-        inputs = inputs.to(device)
+        inputs = inputs.to(model.device)
         features = model.encode_features(inputs)
         x.append(features.data.cpu().clone())
         y.append(labels.clone())
     return TensorDataset(torch.concat(x), torch.concat(y))
 
-def train(model, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn.CrossEntropyLoss, epoch):
-    model.train()
-    total_loss = 0
-    for inputs, *labels in train_loader:
-        labels = labels[0]
-        inputs, labels = inputs.to(device), labels.to(device)
-        if not model.nmc:
-            optim.zero_grad()
-        outs = model(inputs, labels)
-        if model.nmc:
-            model.classifier.update_means(labels, epoch)
-        loss = criterion(outs, labels)
-        total_loss += loss
-        if not model.nmc:
-            loss.backward()
-            optim.step()
-    return
+def run_train_loop(args: TaskSimArgs, model: TasksimModel, train_loader, val_loader, optim, lr_scheduler: torch.optim.lr_scheduler.StepLR, criterion, num_epochs, task_id):
+    print(len(train_loader.dataset), len(val_loader.dataset))
+    if args.head_type == 'nmc' and not args.freeze_features:
+        model_ckpt = get_model_state_dict(args, task_id)
+        assert model_ckpt is not None
+        model.feature_extractor.load_state_dict(model_ckpt)
+        # print('loaded')
 
-def evaluate(model, test_loader, criterion):
-    model.eval()
-    total_loss = 0
-    accuracy = 0
-    with torch.no_grad():
-        for inputs, *labels in test_loader:
-            labels = labels[0]
-            inputs, labels = inputs.to(device), labels.to(device)
-            outs = model(inputs, labels)
-            loss = criterion(outs, labels)
-            accuracy += torch.sum(outs.max(1)
-                                  [1] == labels).float() / len(labels)
-            total_loss += loss
-    return total_loss/len(test_loader), accuracy/len(test_loader)
-
-
-def run_train_loop(model, train_loader, test_loader, optim, lr_scheduler: torch.optim.lr_scheduler.StepLR, criterion, num_epochs):
-    if model.frozen_features and not model.nmc: ## Pre-encode features and only train classifier
-        start = time.time()
+    best_val_loss = float('inf')
+    best_model = None
+    bad_iters = 0
+    if model.nmc:
+        num_epochs = 1
+    if model.frozen_features: ## Pre-encode features and only train classifier
         train_encoded_dataset = encode_features(model, train_loader)
         train_loader = torch.utils.data.DataLoader(
-            train_encoded_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
-        print(time.time() - start)
+            train_encoded_dataset, batch_size=args.batch_size, shuffle=True,
+             num_workers=4, drop_last=False, pin_memory=True)
     for i in range(num_epochs):
-        train(model, train_loader, optim, criterion, i)
-        if not args.skip_eval and not model.nmc:
-            loss, acc = evaluate(model, test_loader, criterion)
-            print(f"Loss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {lr_scheduler.get_lr()}")
+        train_loss, train_acc = train(model, train_loader, optim, criterion, i, args.optim, task_id=task_id) 
+        val_loss, val_acc = evaluate(model, val_loader, criterion)
+        print(f'Epoch {i}: [Train] Acc: {train_acc:.2f} Loss: {train_loss:.2f} \
+        [Val] Acc: {val_acc: .2f} Loss: {val_loss: .2f}')
+        if args.wandb:
+            wandb.log({
+                f'Task_{task_id}_val_acc': val_acc,
+                f'Task_{task_id}_val_loss': val_loss,
+                f'Task_{task_id}_train_acc': train_acc,
+                f'Task_{task_id}_train_loss': train_loss
+            })
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            bad_iters = 0
+            if args.wandb:
+                wandb.run.summary[f'Task_{task_id}_best_val_acc'] = val_acc
+                wandb.run.summary[f'Task_{task_id}_best_val_loss'] = val_loss
+            best_model = deepcopy(model.state_dict())
+        else:
+            bad_iters += 1
+            if bad_iters == args.patience:
+                break
+
         # if not model.nmc:
         #     lr_scheduler.step()
+    model.load_state_dict(best_model)
+    if args.save_feature_extractor and args.head_type == 'linear':
+        save_model(args, model.feature_extractor.state_dict(), task_id)
 
-def run_cl_sequence(model: PretrainedModel, train_scenario, test_scenario, nmc=False):
+
+def run_cl_sequence(args: TaskSimArgs, model: TasksimModel, train_scenario: ClassIncremental, test_scenario: ClassIncremental, replay_buff: rehearsal.RehearsalMemory = None):
     ## Configure loss, optimizer, lr scheduler
     criterion = torch.nn.CrossEntropyLoss()
-    start_train_time = time.time()
     prev_test_loaders = []
-    embeddings = []
-    results = np.zeros((train_scenario.nb_tasks, train_scenario.nb_tasks))
-    replay_buffer = None
+    old_train_loader = None
+    embeddings = None
+    sim_metrics = []
+    results = np.zeros((args.n_tasks, args.n_tasks))
+    task2vec_buffer = None
+    cumulative_val_dataset = None
+    if args.init:
+        init_fe_weights = deepcopy(model.feature_extractor.state_dict())
+    lr = args.lr
     for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test_scenario)):
-        print(f"\n######\t Training on task {task_id}\t ######\n")
+        if task_id >= args.n_tasks:
+            break
+        if args.mixup and task_id == 1:
+            train_taskset = mixup_task(train_scenario, args.mixup_lambda, args.mixup_type)
+            test_taskset = mixup_task(test_scenario, args.mixup_lambda, args.mixup_type)
 
-        ## For multihead we need to update labels to be between
-        ## 0 and # classses in task
-        if args.multihead:
-            train_taskset._y -= train_taskset._y.min()
-            test_taskset._y -= test_taskset._y.min()
+        if args.domain_inc and task_id > 0:
+            num_new_classes = 0
+        else:
+            num_new_classes = train_taskset.nb_classes
+        # print(set(train_taskset._y))
+        print(f"\n######\t Learning Task {task_id} [{num_new_classes} Classes]\t######\n")
+
         ## Load data
         train_taskset, val_taskset = split_train_val(train_taskset, val_split=0.1)
-        train_loader = torch.utils.data.DataLoader(
-            train_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
-        val_loader = torch.utils.data.DataLoader(
-            val_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
         test_loader = torch.utils.data.DataLoader(
-            test_taskset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
+            test_taskset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False, pin_memory=True)
+
+        if args.metrics and task_id > 0:
+            ## This train loader only contains data from unseen classes (no replay buffer samples), used for computing metrics only!
+            new_task_train_loader = torch.utils.data.DataLoader(
+                train_taskset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False, pin_memory=True)
+            sim_metrics.append(compute_metrics(model, old_train_loader, new_task_train_loader))
+
+        # Compute task2vec embedding
+        if args.task2vec and task_id > 0:
+            model.set_task2vec_mode(True)
+            original_new_task_offset = train_taskset._y.min()
+            train_taskset._y -= original_new_task_offset
+
+            new_task_dataloader = torch.utils.data.DataLoader(
+                train_taskset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False, pin_memory=True)
+            old_tasks_dataloader = torch.utils.data.DataLoader(
+            task2vec_buffer, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False, pin_memory=True)
+            emb = {}
+            if args.task2vec_fisher_with_test:
+                old_task_test_loader = prev_test_loaders[-1]
+                new_task_test_loader = test_loader
+            else:
+                old_task_test_loader = None
+                new_task_test_loader = None
+            for type in ['linear']:
+                old_vec, new_vec = task2vec(
+                    model=model, 
+                    old_task_dataloader=old_tasks_dataloader,
+                    new_task_dataloader=new_task_dataloader, 
+                    n_new_classes=num_new_classes,
+                    next_task=task_id, 
+                    type=type, 
+                    epochs=args.task2vec_epochs, 
+                    combined_head=args.task2vec_combined_head,
+                    old_task_test_loader=old_task_test_loader,
+                    new_task_test_loader=new_task_test_loader)
+                emb[f'{type}_old_vec'] = old_vec
+                emb[f'{type}_new_vec'] = new_vec
+            if not embeddings:
+                embeddings = []
+            embeddings.append(emb)
+
+            train_taskset._y += original_new_task_offset
+            model.set_task2vec_mode(False)
+
+        if cumulative_val_dataset == None:  # First task
+            cumulative_val_dataset = ConcatDataset([val_taskset])
+        else:
+            cumulative_val_dataset = ConcatDataset(
+                cumulative_val_dataset.datasets + [val_taskset])
+
+        if args.val_all:
+            val_dataset = cumulative_val_dataset
+        else:
+            val_dataset = val_taskset
+
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False, pin_memory=True)
+
+        ## Add replay buffer to training data
+        if replay_buff is not None and task_id > 0:
+            mem_x, mem_y, mem_t = replay_buff.get()
+            train_taskset.add_samples(mem_x, mem_y, mem_t)
+
+        train_loader = torch.utils.data.DataLoader(
+            train_taskset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False, pin_memory=True)
+
         train_ys = set(train_taskset._y)
         test_ys = set(test_taskset._y)
-        assert train_ys == test_ys
+        # assert train_ys == test_ys
 
         ## Update model, optimizer
-        if args.multihead:
-            model.add_and_set_head(train_taskset.nb_classes)
-        else:
-            model.extend_head(train_taskset.nb_classes)
+        if not args.domain_inc or task_id == 0:
+            model.extend_head(num_new_classes)
+
+        if args.init and task_id > 0:
+            model.feature_extractor.load_state_dict(init_fe_weights)
+            model.classifier.init_weights()
+            model.classifier.to(model.device)
+
         optim, lr_scheduler = None, None
-        if not nmc:
+        if args.head_type == 'linear':
             if args.freeze_features:
                 optim_params = model.classifier.parameters()
             else:
                 optim_params = model.parameters()
-            optim, lr_scheduler = get_optimizer_lr_scheduler(args.optim, optim_params, args.lr)
+            # if task_id in [1, 3]:
+            #     lr /= 10
+            print(f'Learning rate: {lr}')
+            optim, lr_scheduler = get_optimizer_lr_scheduler(args.optim, optim_params, lr, args.momentum)
 
-        num_epochs = 1 if nmc == True else args.num_epochs
         ## Train and evaluate test accuracy on current task
-        run_train_loop(model, train_loader, val_loader, optim,
-                       lr_scheduler, criterion, num_epochs)
+        print("\n###\tTraining\t###\n")
+        print(f"Model head size: {model.classifier.weight.shape[0]}")
+        run_train_loop(args, model, train_loader, val_loader, optim,
+                       lr_scheduler, criterion, args.num_epochs, task_id)
         loss, acc = evaluate(model, test_loader, criterion)
         results[task_id][task_id] = acc
-        print(f"Task: {task_id}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
+
+        print(f"\nTask {task_id} IID Test Accuracy: {acc*100:.2f}")
 
         ## Eval test accuracy on previous tasks
-        print(f"\n## Testing Previous Task Accuracies ##\n")
-        for i, tl in enumerate(prev_test_loaders):
-            if args.multihead:
-                model.set_head(i)
-            loss, acc = evaluate(model, tl, criterion)
-            print(f"Task: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%\tLR: {None}")
-            results[task_id][i] = acc
+        if task_id > 0:
+            print(f"\n## Testing Previous Tasks ##\n")
+            for i, tl in enumerate(prev_test_loaders):
+                loss, acc = evaluate(model, tl, criterion)
+                print(f"Task: {i}\tLoss: {loss:.4f}\tAcc: {acc*100:.2f}%")
+                results[task_id][i] = acc
         prev_test_loaders.append(test_loader)
+        
+        if task2vec_buffer == None:  # First task
+            task2vec_buffer = ConcatDataset([train_taskset])
+        else:
+            task2vec_buffer = ConcatDataset(task2vec_buffer.datasets + [train_taskset])
 
-        # Compute task2vec embedding
-        model.set_task2vec_mode(True)
-        if args.multihead:
-            probe_network = get_model('resnet34', pretrained=True, num_classes=int(
-                train_taskset.nb_classes+1)).cuda()
-            embeddings.append(Task2Vec(probe_network, max_samples=1000,
-                              skip_layers=6).embed(train_taskset))
-        elif not nmc:
-            if replay_buffer == None: ## First task
-                replay_buffer = ConcatDataset([train_taskset])
-            else:
-                replay_buffer = ConcatDataset(replay_buffer.datasets + [train_taskset])
-            model.unfreeze_features()
-            embeddings.append(Task2Vec(model, max_samples=1000,
-                                       skip_layers=0).embed2(replay_buffer))
-            model.freeze_features()
-        model.set_task2vec_mode(False)
-    print(f"\n\nTrain time: {time.time()-start_train_time:.2f}s")
-    return results, embeddings
+        ## Update replay buffer
+        if replay_buff is not None:
+            replay_buff.add(*train_scenario[task_id].get_raw_samples(), z=None)
 
-def prepare_scenario(dataset, increment, transform, order=None):
+        old_train_loader = train_loader
+    return results, embeddings, sim_metrics
+
+def prepare_scenario(dataset, n_tasks, n_classes_per_task, transform, order=None, domain_inc=False):
+    if domain_inc:
+        return ContinualScenario(dataset, transformations=transform)
+    num_classes = dataset.num_classes
+    if n_classes_per_task == None:
+        if num_classes % n_tasks == 0:
+            incs = [(num_classes / n_tasks)] * n_tasks
+        else:
+            incs = [math.ceil(num_classes / n_tasks)] * (n_tasks - 1)
+            incs.append(num_classes - sum(incs))
+    else:
+        assert n_classes_per_task * n_tasks <= num_classes
+        tasks = int(num_classes / n_classes_per_task)
+        if num_classes % n_classes_per_task == 0:
+            incs = [n_classes_per_task] * tasks
+        else:
+            incs = [n_classes_per_task] * math.ceil(tasks - 1)
+            incs.append(num_classes - sum(incs))
+    assert sum(incs) == num_classes
     return ClassIncremental(
         dataset,
-        increment=increment,
+        increment=incs,
         transformations=transform,
         class_order=order
     )
 
+def mixup_task(scenario, mixup_coeff, mixup_type):
+    assert len(scenario) == 2
+    task1, task2 = list(scenario)
+    min_task2_y = np.min(task2._y)
+    task2._y -= min_task2_y
+    ## To simplify mixup, make sure task1/task2 have same number of classes and same number of examples per class
+    assert list(np.bincount(task1._y)) == list(np.bincount(task2._y))
+    if mixup_type == 'noise':
+        mixup_coeff = 1 - mixup_coeff
+    for i in range(task1.nb_classes):
+        task1_i_x = task1._x[task1._y == i]
+        if mixup_type == 'task_data':
+            mixup_data = task2._x[task2._y == i]
+        elif mixup_type == 'noise':
+            mixup_data = np.random.standard_normal(size=task1_i_x.shape)
+        task2._x[task2._y == i] = mixup_coeff*task1_i_x + (1 - mixup_coeff)*mixup_data
+    # task2._y += min_task2_y
+    return task2
 
-def pre_encode_features(model, dataset):
-    data_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=True, pin_memory=True)
-    x, y = [], []
-    for inputs, *labels in data_loader:
-        labels = labels[0]
-        inputs = inputs.to(device)
-        features = model.encode_features(inputs)
-        x.append(features.data.cpu().numpy())
-        y.append(labels.numpy())
-    H5Dataset(np.concat(x), np.concat(y), data_path='encoded.h5')
+def run(args: TaskSimArgs):
+    start_time = time.time()
 
-transform = get_transform(args.dataset, args.model)
-train_dataset, test_dataset = load_dataset(args.dataset)
-train_scenario = prepare_scenario(train_dataset, args.increment, transform)
-scenario_generator = ClassOrderGenerator(train_scenario)
-seen_perms = set()
+    if args.wandb:
+        wandb.init(project="CL-Similarity", entity="clip_cl",
+                   config=args, reinit=True)
+        args = TaskSimArgs(**wandb.run.config)
 
-# model = PretrainedModel(
-#     args.model, device, freeze_features=args.freeze_features, multihead=args.multihead)
-# model = model.to(device)
-# pre_encode_features(model, train_dataset)
+        wandb.run.name = f'{args.get_run_id()}_{wandb.run.id}'
 
-if args.results_dir:
-    run_id = get_run_id(args.results_dir)
+    print(args)
+    args.validate_args()
 
-for scenario_id in range(args.num_permutations):
-    while tuple(train_scenario.class_order) in seen_perms:
-        train_scenario = scenario_generator.sample(seed=scenario_id)
-    seen_perms.add(tuple(train_scenario.class_order))
-    test_scenario = prepare_scenario(test_dataset, args.increment, transform, train_scenario.class_order)
-    model = PretrainedModel(args.model, device, freeze_features=args.freeze_features, multihead=args.multihead)
-    model = model.to(device)
-    nmc_results, linear_classifier_results, embeddings = None, None, None
-    linear_classifier_results, embeddings = run_cl_sequence(model, train_scenario, test_scenario)
-    if args.nmc:
-        model.configure_nmc()
-        nmc_results, _ = run_cl_sequence(model, train_scenario, test_scenario, nmc=True)
-    if args.results_dir is not None:
-        save_results(args, linear_classifier_results, nmc_results,
-                     embeddings, scenario_id, wandb, run_id)
+    if args.save_results and get_full_results_dir(args).exists():
+        print(f'Specified results directory: {get_full_results_dir(args)} already exists. Exiting...')
+        return
+
+    set_seed(args.seed)
+        
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    train_dataset, test_dataset = load_dataset(args.dataset, args.domain_inc)
+    transform = get_transform(args.dataset, args.model)
+
+    class_order = [i for i in range(train_dataset.num_classes)]
+    rng = np.random.RandomState(seed=args.seed)
+    rng.shuffle(class_order)
+
+    train_scenario = prepare_scenario(train_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
+    test_scenario = prepare_scenario(test_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
+
+    print(f"Total number of classes: {train_scenario.nb_classes}.")
+    print(f"Number of tasks: {args.n_tasks}.")
+    print(class_order)
+    # print(get_dataset_class_names(args.dataset, class_order))
+
+    model = TasksimModel(args.model, device, freeze_features=args.freeze_features,
+                            multihead=args.multihead, pretrained=args.pretrained, 
+                            nmc=args.head_type=='nmc', no_masking=args.no_masking).to(device)
+
+    replay_buff = None
+    if args.replay_size_per_class != 0:
+        if args.replay_size_per_class == -1:
+            from collections import Counter
+            replay_size_per_class = max(
+                Counter(train_dataset.dataset.targets).values())
+            print(replay_size_per_class)
+        else:
+            replay_size_per_class = args.replay_size_per_class
+        replay_buff = rehearsal.RehearsalMemory(
+            memory_size=replay_size_per_class * train_scenario.nb_classes,
+            herding_method="random",
+            fixed_memory=True,
+            nb_total_classes=train_scenario.nb_classes
+        )
+    results, embeddings, sim_metrics = run_cl_sequence(args, model, train_scenario, test_scenario, replay_buff)
+    summary = evaluate_results(args, results, embeddings, sim_metrics)
+    results = pd.DataFrame(results)
+    print(results)
+    print(summary)
+
+    print(f'\n#####\tPerformance summary\t#####\n')
+    print(f'Final CL Accuracy: {summary["cl_acc"]*100:.2f}%')
+    print(f'Mean IID Accuracy: {summary["mean_iid_acc"]*100:.2f}%')
+    print(f'Mean Forgetting: {summary["mean_fgt"]*100:.2f}%')
+
+    if args.wandb:
+        wandb.log(summary)
+
+    if args.save_results:
+        save_results(args, results, embeddings)
+
+    if args.wandb:
+        wandb.run.finish()
+    print(f'\nTotal Time Elapsed: {time.time()-start_time:.2f}')
 
 
-print(f"Total number of classes: {train_scenario.nb_classes}.")
-print(f"Number of tasks: {train_scenario.nb_tasks}.")
-print(f"Total run time: {time.time()-very_start:.2f}s")
+if __name__ == '__main__':
+    args = parse_args()
+    # args.dataset = 'cifar-100'
+    # args.n_classes_per_task = 20
+    # args.n_tasks = 5
+    # # args.batch_size = 20
+    # # args.domain_inc = True
+    # args.replay_size_per_class = -1
+    # args.num_epochs = 1
+    # args.metrics = True
+    # args.wandb = True
+    # args.task2vec = False
+    # args.task2vec_combined_head = True
+    # torch.autograd.set_detect_anomaly(True)
+    run(args)

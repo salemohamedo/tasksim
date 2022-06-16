@@ -1,0 +1,50 @@
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - --wandb
+method: grid
+parameters:
+  batch_size:
+    values: [128]
+  dataset:
+    values: [cifar-10, cifar-100]
+  lr:
+    values: [0.01, 0.1, 0.001]
+  model:
+    values: [resnet, vgg, densenet]
+  multihead:
+    value: false
+  n_tasks:
+    value: 2
+  head_type:
+    value: linear
+  num_epochs:
+    value: 10
+  task2vec_epochs:
+    value: 10
+  optim:
+    values: [sgd]
+  mixup:
+    value: true
+  mixup_lambda:
+    values: [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1]
+  mixup_type:
+    values: [task_data, noise]
+  task2vec_combined_head:
+    values: [true]  
+  task2vec_fisher_with_test:
+    values: [true, false]
+  save_feature_extractor:
+    value: false
+  save_results:
+    value: false
+  task2vec:
+    value: true
+  wandb:
+    value: true
+  seed:
+    values: [0, 1]
+  sweep_overwrite:
+    value: false
+program: main.py
