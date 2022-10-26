@@ -120,6 +120,33 @@ def get_feature_extractor(model, device, pretrained):
         with torch.no_grad():
             latent_dim = feature_extractor.encode_image(image).shape[1]
         flatten_features = True
+    else:
+        transformations = 
+        encoder_tuple = encoders[model]
+        encoder = encoder_tuple.partial_encoder(device=device, input_shape=16,
+                                                                    fix_batchnorms_encoder=True,
+                                                                    width_factor=None,
+                                                                    droprate=0.)
+
+        trans_tr, trans_te = encoder.transformation, encoder.transformation_val
+        if trans_tr is None:
+            trans_tr = [transforms.Resize((224, 224)), 
+                transforms.ToTensor(), 
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])]
+
+        if trans_te is None:
+            trans_te = trans_tr
+        
+        feature_extractor = encoder.encoder
+        feature_extractor.to(device)
+        image = clip_transforms(transforms.ToPILImage()(
+            torch.Tensor(torch.ones(3, 224, 224)))).unsqueeze(0).to(device)
+        feature_extractor.eval()
+        with torch.no_grad():
+            latent_dim = feature_extractor(image).shape[1]
+        flatten_features = True
+        return feature_extractor, latent_dim, flatten_features
+
     return feature_extractor, latent_dim, flatten_features
 
 class TasksimModel(torch.nn.Module):
