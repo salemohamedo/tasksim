@@ -3,7 +3,6 @@ import numpy as np
 from scipy.sparse.linalg import eigsh as largest_eigsh
 
 
-
 def subspace_similarity(X, Y, k=10, centered=True):
     if centered:
         X = X - np.mean(X, 0, keepdims=True)
@@ -21,30 +20,41 @@ def subspace_similarity(X, Y, k=10, centered=True):
     X_Y = (X_eig.T).dot(Y_eig)
     subspace_overlap = (1/k)*(np.linalg.norm(X_Y, ord='fro') ** 2)
 
-
     return subspace_overlap
 
 
 
-def get_features(model, dataloader, device):
+def get_features(model, dataloader, num_samples=10000):
     model.eval()
-    X = []
+    features = []
     labels = []
     with torch.no_grad():
-        for i, (x, y, _) in enumerate(dataloader):
-            x = x.to(device)
+        for x, y, _ in dataloader:
+            x = x.to(model.device)
             _x = model(x)
             if len(_x.shape)==2:
-                X.append(_x.detach().cpu())
+                features.append(_x.detach().cpu())
             else:
-                X.append(_x.squeeze().detach().cpu())
-
+                features.append(_x.squeeze().detach().cpu())
             labels.append(y)
 
-    X = torch.cat(X)
+    features = torch.cat(features)
     labels = torch.cat(labels)
 
-    return X.numpy(), labels.numpy()
+    unique_labels = torch.unique(labels)
+    num_classes = len(unique_labels)
+    num_samples_per_class = num_samples // num_classes
+    features = []
+    for y in unique_labels:
+        X_ = features[labels == y]
+        idx = torch.randperm(X_.shape[0])
+        X_ = X_[idx]
+
+        X_ = X_ if X_.shape[0] <= num_samples_per_class else X_[:num_samples_per_class]
+        features.append(X_)
+    features = torch.cat(features)
+
+    return features.numpy()
 
 
 def trace_similarity(X, Y):
