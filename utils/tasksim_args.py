@@ -73,9 +73,10 @@ class TaskSimArgs:
         if self.init:
             assert self.task2vec == False
         if self.domain_inc:
-            assert self.dataset == 'cifar-100', 'Only Cifar-100 is supported for domain_inc setting!'
+            assert self.dataset == 'cifar-100' or self.dataset == 'tiny', 'Only Cifar-100 is supported for domain_inc setting!'
             assert self.n_tasks == 5
-            assert self.n_classes_per_task == 20
+            if self.dataset == 'cifar-100':
+                assert self.n_classes_per_task == 20
         assert self.head_type in ['nmc', 'linear']
         assert self.replay_size_per_class >= -1
         if self.n_classes_per_task:

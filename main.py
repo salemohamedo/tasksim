@@ -18,9 +18,14 @@ from utils.utils import get_model_state_dict, get_full_results_dir, set_seed, sa
 from utils.task2vec_utils import task2vec, cos_similarity
 from utils.tasksim_args import TaskSimArgs, parse_args
 from utils.eval_utils import evaluate_results
+from utils.test_perturbations import TinyDomainIncScenario
 from metrics import compute_metrics
 
 import wandb
+
+DOMAIN_INC_DISTS = ["gaussian_noise", "shot_noise", "impulse_noise", "speckle_noise", "gaussian_blur",
+                    "defocus_blur", "motion_blur", "zoom_blur", "fog", "snow", "spatter", "contrast",
+                    "brightness", "saturate", "elastic_transform", "glass_blur"]
 
 def train(model: TasksimModel, train_loader, optim: torch.optim.Optimizer, criterion: torch.nn.CrossEntropyLoss, epoch, optim_type, task_id):
     model.train()
@@ -134,6 +139,8 @@ def run_cl_sequence(args: TaskSimArgs, model: TasksimModel, train_scenario: Clas
         init_fe_weights = deepcopy(model.feature_extractor.state_dict())
     lr = args.lr
     for task_id, (train_taskset, test_taskset) in enumerate(zip(train_scenario, test_scenario)):
+        train_taskset._y = train_taskset._y.astype('int64')
+        test_taskset._y = test_taskset._y.astype('int64')
         if task_id >= args.n_tasks:
             break
         if args.mixup and task_id == 1:
@@ -339,15 +346,24 @@ def run(args: TaskSimArgs):
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    train_dataset, test_dataset = load_dataset(args.dataset, args.domain_inc)
+    train_dataset, test_dataset = load_dataset(args.dataset, args.domain_inc, args.n_classes_per_task)
     transform = get_transform(args.dataset, args.model)
 
     class_order = [i for i in range(train_dataset.num_classes)]
     rng = np.random.RandomState(seed=args.seed)
-    rng.shuffle(class_order)
-
-    train_scenario = prepare_scenario(train_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
-    test_scenario = prepare_scenario(test_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
+    if args.dataset == 'tiny' and args.domain_inc:
+        dists = ["None"] + rng.choice(DOMAIN_INC_DISTS, replace=False, size=args.n_tasks-1).tolist()
+        train_scenario = TinyDomainIncScenario(
+            train_dataset, list_perturbation=dists, list_severity=[1])
+        test_scenario = TinyDomainIncScenario(
+            test_dataset, list_perturbation=dists, list_severity=[1])
+        print(dists)
+        if args.wandb:
+            wandb.log({'distortions': str(dists)})
+    else:
+        rng.shuffle(class_order)
+        train_scenario = prepare_scenario(train_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
+        test_scenario = prepare_scenario(test_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
 
     print(f"Total number of classes: {train_scenario.nb_classes}.")
     print(f"Number of tasks: {args.n_tasks}.")
@@ -362,8 +378,12 @@ def run(args: TaskSimArgs):
     if args.replay_size_per_class != 0:
         if args.replay_size_per_class == -1:
             from collections import Counter
+            if args.dataset == 'tiny' and args.domain_inc:
+                ts = train_dataset.data[1]
+            else:
+                ts = train_dataset.dataset.targets
             replay_size_per_class = max(
-                Counter(train_dataset.dataset.targets).values())
+                Counter(ts).values())
             print(replay_size_per_class)
         else:
             replay_size_per_class = args.replay_size_per_class
@@ -397,13 +417,13 @@ def run(args: TaskSimArgs):
 
 if __name__ == '__main__':
     args = parse_args()
-    # args.dataset = 'cifar-100'
-    # args.n_classes_per_task = 20
-    # args.n_tasks = 5
-    # # args.batch_size = 20
-    # # args.domain_inc = True
-    # args.replay_size_per_class = -1
-    # args.num_epochs = 1
+    args.dataset = 'tiny'
+    args.n_classes_per_task = 20
+    args.n_tasks = 5
+    # args.batch_size = 20
+    args.domain_inc = True
+    args.replay_size_per_class = -1
+    args.num_epochs = 1
     # args.metrics = True
     # args.wandb = True
     # args.task2vec = False
