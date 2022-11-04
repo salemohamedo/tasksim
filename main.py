@@ -417,9 +417,9 @@ def run(args: TaskSimArgs):
 
 if __name__ == '__main__':
     args = parse_args()
-    # args.dataset = 'tiny'
+    args.dataset = 'tiny'
     args.n_classes_per_task = 20
-    args.n_tasks = 5
+    args.n_tasks = 2
     # args.batch_size = 20
     args.domain_inc = False
     args.replay_size_per_class = -1

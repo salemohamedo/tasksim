@@ -9,35 +9,53 @@ def run_avg(old, old_count, new, new_count):
     total = old_count + new_count
     return (old_count/total)*old + (new_count/total)*new
 
-## From https://stackoverflow.com/questions/44549369/kullback-leibler-divergence-from-gaussian-pm-pv-to-gaussian-qm-qv
-def kl_mvn(m0, S0, m1, S1):
-    """
-    Kullback-Liebler divergence from Gaussian pm,pv to Gaussian qm,qv.
-    Also computes KL divergence from a single Gaussian pm,pv to a set
-    of Gaussians qm,qv.
+# ## From https://stackoverflow.com/questions/44549369/kullback-leibler-divergence-from-gaussian-pm-pv-to-gaussian-qm-qv
+# def kl_mvn(m0, S0, m1, S1):
+#     """
+#     Kullback-Liebler divergence from Gaussian pm,pv to Gaussian qm,qv.
+#     Also computes KL divergence from a single Gaussian pm,pv to a set
+#     of Gaussians qm,qv.
     
 
-    From wikipedia
-    KL( (m0, S0) || (m1, S1))
-         = .5 * ( tr(S1^{-1} S0) + log |S1|/|S0| + 
-                  (m1 - m0)^T S1^{-1} (m1 - m0) - N )
-    """
+#     From wikipedia
+#     KL( (m0, S0) || (m1, S1))
+#          = .5 * ( tr(S1^{-1} S0) + log |S1|/|S0| + 
+#                   (m1 - m0)^T S1^{-1} (m1 - m0) - N )
+#     """
 
-    S0 = np.diag(np.diag(S0))
-    S1 = np.diag(np.diag(S1))
-    # store inv diag covariance of S1 and diff between means
+#     S0 = np.diag(np.diag(S0))
+#     S1 = np.diag(np.diag(S1))
+#     # store inv diag covariance of S1 and diff between means
+#     N = m0.shape[0]
+#     iS1 = np.linalg.inv(S1)
+#     diff = m1 - m0
+
+#     # kl is made of three terms
+#     tr_term = np.trace(iS1 @ S0)
+#     # np.sum(np.log(S1)) - np.sum(np.log(S0))
+#     det_term = np.log(np.linalg.det(S1)/np.linalg.det(S0))
+#     # np.sum( (diff*diff) * iS1, axis=1)
+#     quad_term = diff.T @ np.linalg.inv(S1) @ diff
+#     #print(tr_term,det_term,quad_term)
+#     return .5 * (tr_term + det_term + quad_term - N)
+
+
+def kl_mvn(m0, S0, m1, S1):
+    def kl_svn(m0, S0, m1, S1):
+        return np.log(np.sqrt(S1)/np.sqrt(S0)) + 0.5*((S0 + (m0 - m1)**2)/S1) - 0.5
+    S0 = np.diag(S0)
+    S1 = np.diag(S1)
     N = m0.shape[0]
-    iS1 = np.linalg.inv(S1)
-    diff = m1 - m0
+    return np.mean([kl_svn(m0[i], S0[i], m1[i], S1[i]) for i in range(N)])
 
-    # kl is made of three terms
-    tr_term = np.trace(iS1 @ S0)
-    # np.sum(np.log(S1)) - np.sum(np.log(S0))
-    det_term = np.log(np.linalg.det(S1)/np.linalg.det(S0))
-    # np.sum( (diff*diff) * iS1, axis=1)
-    quad_term = diff.T @ np.linalg.inv(S1) @ diff
-    #print(tr_term,det_term,quad_term)
-    return .5 * (tr_term + det_term + quad_term - N)
+
+def wass_mvn(m0, S0, m1, S1):
+    def wass_svn(m0, S0, m1, S1):
+        return np.sqrt((m0 - m1)**2 + S0 + S1 - 2*np.sqrt(S0*S1))
+    S0 = np.diag(S0)
+    S1 = np.diag(S1)
+    N = m0.shape[0]
+    return np.mean([wass_svn(m0[i], S0[i], m1[i], S1[i]) for i in range(N)])
 
 def compute_per_task_metrics(model: TasksimModel, data_loader):
     class_stats = dict()
@@ -109,20 +127,24 @@ def compute_metrics(model: TasksimModel, old_data_loader, new_data_loader):
     metrics['entropy_ratio'] = old_metrics['entropy']/new_metrics['entropy']
 
     kl_div = 0
-    prototype_sim = 0
+    wass_dist = 0
     for i in old_metrics['class_stats'].keys():
         for j in new_metrics['class_stats'].keys():
-            # kl_div += kl_mvn(
-            #     old_metrics['class_stats'][i]['mean'],
-            #     old_metrics['class_stats'][i]['cov'],
-            #     new_metrics['class_stats'][j]['mean'],
-            #     new_metrics['class_stats'][j]['cov'])
-            prototype_sim += 1 - cosine(old_metrics['class_stats'][i]['mean'], new_metrics['class_stats'][j]['mean'])
+            kl_div += kl_mvn(
+                old_metrics['class_stats'][i]['mean'],
+                old_metrics['class_stats'][i]['cov'],
+                new_metrics['class_stats'][j]['mean'],
+                new_metrics['class_stats'][j]['cov'])
+            wass_dist += wass_mvn(
+                old_metrics['class_stats'][i]['mean'],
+                old_metrics['class_stats'][i]['cov'],
+                new_metrics['class_stats'][j]['mean'],
+                new_metrics['class_stats'][j]['cov'])
     
     kl_div=kl_div / (len(old_metrics['class_stats']) * len(new_metrics['class_stats']))
     metrics['kl_div']=kl_div
 
-    prototype_sim = prototype_sim / \
+    wass_dist = wass_dist / \
         (len(old_metrics['class_stats']) * len(new_metrics['class_stats']))
-    metrics['prototype_sim']=prototype_sim
+    metrics['wass_dist'] = wass_dist
     return metrics
