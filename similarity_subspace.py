@@ -4,7 +4,7 @@ from scipy.sparse.linalg import eigsh as largest_eigsh
 from scipy.spatial import distance
 
 
-def subspace_similarity(X, Y, k=10, centered=True):
+def subspace_overlap(X, Y, k=10, centered=True):
     """
         Section 4.3 of https://openreview.net/pdf?id=LhY8QdUGSuw
     """
@@ -45,7 +45,7 @@ def get_features(model, dataloader, max_num_samples=10000):
     features = torch.cat(features)
     labels = torch.cat(labels)
 
-    unique_labels = torch.unique(labels)
+    unique_labels = np.unique(labels.numpy())
     num_classes = len(unique_labels)
     num_samples_per_class = max_num_samples // num_classes
     features = []

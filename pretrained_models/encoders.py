@@ -23,7 +23,7 @@ from transformers import ViTFeatureExtractor, ViTModel, ViTForImageClassificatio
 
 # import vissl
 import wandb
-from wide_rn import WideResNet
+from . wide_rn import WideResNet
 
 # from .model_wrapper import TorchModelWrapper
 # from .helper import torch_NN, bn_eval, getKeysByValue

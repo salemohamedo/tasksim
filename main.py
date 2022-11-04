@@ -345,21 +345,23 @@ def run(args: TaskSimArgs):
     class_order = [i for i in range(train_dataset.num_classes)]
     rng = np.random.RandomState(seed=args.seed)
     rng.shuffle(class_order)
-
-    print(f"Total number of classes: {train_scenario.nb_classes}.")
-    print(f"Number of tasks: {args.n_tasks}.")
-    print(class_order)
     # print(get_dataset_class_names(args.dataset, class_order))
 
     model = TasksimModel(args.model, device, freeze_features=args.freeze_features,
                             multihead=args.multihead, pretrained=args.pretrained, 
                             nmc=args.head_type=='nmc', no_masking=args.no_masking).to(device)
 
+
+    print(model)
     
     if args.model in PRETRAINED_MODELS:
         transform = model.transform
     train_scenario = prepare_scenario(train_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
     test_scenario = prepare_scenario(test_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
+
+    print(f"Total number of classes: {train_scenario.nb_classes}.")
+    print(f"Number of tasks: {args.n_tasks}.")
+    print(class_order)
 
     replay_buff = None
     if args.replay_size_per_class != 0:
@@ -400,14 +402,15 @@ def run(args: TaskSimArgs):
 
 if __name__ == '__main__':
     args = parse_args()
-    # args.dataset = 'cifar-100'
-    # args.n_classes_per_task = 20
-    # args.n_tasks = 5
-    # # args.batch_size = 20
-    # # args.domain_inc = True
+    args.dataset = 'cifar-100'
+    args.model = "resnet"
+    args.n_classes_per_task = 20
+    args.n_tasks = 5
+    # args.batch_size = 20
+    # args.domain_inc = True
     # args.replay_size_per_class = -1
-    # args.num_epochs = 1
-    # args.metrics = True
+    args.num_epochs = 1
+    args.metrics = True
     # args.wandb = True
     # args.task2vec = False
     # args.task2vec_combined_head = True

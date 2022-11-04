@@ -3,7 +3,7 @@ import numpy as np
 from models import TasksimModel
 from scipy.special import softmax
 from scipy.stats import entropy
-from similarity_metrics import subspace_overlap, get_features, calculate_cosine_similarity, trace_similarity
+from similarity_subspace import subspace_overlap, get_features, calculate_cosine_similarity, trace_similarity
 
 def run_avg(old, old_count, new, new_count):
     total = old_count + new_count
