@@ -3,6 +3,7 @@ import numpy as np
 from models import TasksimModel
 from scipy.special import softmax
 from scipy.stats import entropy
+from scipy.spatial.distance import cosine
 
 def run_avg(old, old_count, new, new_count):
     total = old_count + new_count
@@ -38,33 +39,6 @@ def kl_mvn(m0, S0, m1, S1):
     #print(tr_term,det_term,quad_term)
     return .5 * (tr_term + det_term + quad_term - N)
 
-def compute_metrics(model: TasksimModel, old_data_loader, new_data_loader):
-    old_metrics = compute_per_task_metrics(model, old_data_loader)
-    new_metrics = compute_per_task_metrics(model, new_data_loader)
-
-    metrics = {}
-
-    metrics['max_prob_diff'] = old_metrics['max_prob'] - new_metrics['max_prob']
-    metrics['max_prob_ratio'] = old_metrics['max_prob']/new_metrics['max_prob']
-    metrics['max_logit_diff'] = old_metrics['max_logit'] - new_metrics['max_logit']
-    metrics['max_logit_ratio'] = old_metrics['max_logit'] / new_metrics['max_logit']
-    metrics['entropy_diff'] = old_metrics['entropy'] - new_metrics['entropy']
-    metrics['entropy_ratio'] = old_metrics['entropy']/new_metrics['entropy']
-
-    kl_div = 0
-    for i in old_metrics['class_stats'].keys():
-        for j in new_metrics['class_stats'].keys():
-            kl_div += kl_mvn(
-                old_metrics['class_stats'][i]['mean'], 
-                old_metrics['class_stats'][i]['cov'],
-                new_metrics['class_stats'][j]['mean'],
-                new_metrics['class_stats'][j]['cov'],
-                             )
-    kl_div = kl_div/(len(old_metrics['class_stats']) * len(new_metrics['class_stats']))
-    metrics['kl_div'] = kl_div
-    return metrics
-
-
 def compute_per_task_metrics(model: TasksimModel, data_loader):
     class_stats = dict()
     max_logit = 0
@@ -88,7 +62,7 @@ def compute_per_task_metrics(model: TasksimModel, data_loader):
                     class_stats[k] = {'mean': 0, 'cov': 0, 'counts': 0}
                 cur_counts = (labels == k).sum()
                 total_counts = class_stats[k]['counts'] + cur_counts
-                class_features = outs[labels == k]
+                class_features = features[labels == k]
                 cur_mean = np.mean(class_features, axis=0)
                 cur_cov = np.cov(class_features, rowvar=False)
                 class_stats[k]['mean'] = run_avg(class_stats[k]['mean'], class_stats[k]['counts'], cur_mean, cur_counts)
@@ -118,6 +92,37 @@ def compute_per_task_metrics(model: TasksimModel, data_loader):
     }
 
 
-            
-            
-        
+def compute_metrics(model: TasksimModel, old_data_loader, new_data_loader):
+    old_metrics = compute_per_task_metrics(model, old_data_loader)
+    new_metrics = compute_per_task_metrics(model, new_data_loader)
+
+    metrics = {}
+
+    metrics['max_prob_diff'] = old_metrics['max_prob'] - \
+        new_metrics['max_prob']
+    metrics['max_prob_ratio'] = old_metrics['max_prob']/new_metrics['max_prob']
+    metrics['max_logit_diff'] = old_metrics['max_logit'] - \
+        new_metrics['max_logit']
+    metrics['max_logit_ratio'] = old_metrics['max_logit'] / \
+        new_metrics['max_logit']
+    metrics['entropy_diff'] = old_metrics['entropy'] - new_metrics['entropy']
+    metrics['entropy_ratio'] = old_metrics['entropy']/new_metrics['entropy']
+
+    kl_div = 0
+    prototype_sim = 0
+    for i in old_metrics['class_stats'].keys():
+        for j in new_metrics['class_stats'].keys():
+            # kl_div += kl_mvn(
+            #     old_metrics['class_stats'][i]['mean'],
+            #     old_metrics['class_stats'][i]['cov'],
+            #     new_metrics['class_stats'][j]['mean'],
+            #     new_metrics['class_stats'][j]['cov'])
+            prototype_sim += 1 - cosine(old_metrics['class_stats'][i]['mean'], new_metrics['class_stats'][j]['mean'])
+    
+    kl_div=kl_div / (len(old_metrics['class_stats']) * len(new_metrics['class_stats']))
+    metrics['kl_div']=kl_div
+
+    prototype_sim = prototype_sim / \
+        (len(old_metrics['class_stats']) * len(new_metrics['class_stats']))
+    metrics['prototype_sim']=prototype_sim
+    return metrics

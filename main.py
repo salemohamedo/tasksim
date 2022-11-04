@@ -417,14 +417,14 @@ def run(args: TaskSimArgs):
 
 if __name__ == '__main__':
     args = parse_args()
-    args.dataset = 'tiny'
+    # args.dataset = 'tiny'
     args.n_classes_per_task = 20
     args.n_tasks = 5
     # args.batch_size = 20
-    args.domain_inc = True
+    args.domain_inc = False
     args.replay_size_per_class = -1
     args.num_epochs = 1
-    # args.metrics = True
+    args.metrics = True
     # args.wandb = True
     # args.task2vec = False
     # args.task2vec_combined_head = True
