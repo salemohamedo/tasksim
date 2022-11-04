@@ -48,7 +48,7 @@ def get_features(model, dataloader, max_num_samples=10000):
     unique_labels = np.unique(labels.numpy())
     num_classes = len(unique_labels)
     num_samples_per_class = max_num_samples // num_classes
-    features = []
+    features_subset = []
     prototypes = []
     for y in unique_labels:
         X_ = features[labels == y]
@@ -56,13 +56,13 @@ def get_features(model, dataloader, max_num_samples=10000):
         X_ = X_[idx]
 
         X_ = X_ if X_.shape[0] <= num_samples_per_class else X_[:num_samples_per_class]
-        p = torch.mean(features, dim=0, keepdim=True)
-        features.append(X_)
+        p = torch.mean(X_, dim=0, keepdim=True)
+        features_subset.append(X_)
         prototypes.append(p)
     prototypes = torch.cat(prototypes)
-    features = torch.cat(features)
+    features_subset = torch.cat(features_subset)
 
-    return features.numpy(), prototypes.numpy()
+    return features_subset.numpy(), prototypes.numpy()
 
 
 def calculate_cosine_similarity(prototypes1, prototypes2):
