@@ -3,7 +3,7 @@ import numpy as np
 from models import TasksimModel
 from scipy.special import softmax
 from scipy.stats import entropy
-from similarity_metrics import subspace_overlap, get_features
+from similarity_metrics import subspace_overlap, get_features, calculate_cosine_similarity, trace_similarity
 
 def run_avg(old, old_count, new, new_count):
     total = old_count + new_count
@@ -41,15 +41,19 @@ def kl_mvn(m0, S0, m1, S1):
 
 def compute_metrics(model: TasksimModel, old_data_loader, new_data_loader):
 
-    oldX = get_features(model, old_data_loader, num_samples=10000)
-    newX = get_features(model, new_data_loader, num_samples=10000)
+    oldX, old_prototypes = get_features(model, old_data_loader, max_num_samples=10000)
+    newX, new_prototypes = get_features(model, new_data_loader, max_num_sampless=10000)
 
     subspace_sim = subspace_overlap(oldX, newX, k=10, centered=True)
+    prototypes_sim = calculate_cosine_similarity(old_prototypes, new_prototypes)
+    trace_overlap = trace_similarity(oldX, newX)
 
     old_metrics = compute_per_task_metrics(model, old_data_loader)
     new_metrics = compute_per_task_metrics(model, new_data_loader)
 
     metrics = {}
+    metrics['trace_overlap'] = trace_overlap
+    metrics['prototypes_sim'] = prototypes_sim
     metrics['subspace_overlap'] = subspace_sim
     metrics['max_prob_diff'] = old_metrics['max_prob'] - new_metrics['max_prob']
     metrics['max_prob_ratio'] = old_metrics['max_prob']/new_metrics['max_prob']
