@@ -13,7 +13,7 @@ from copy import deepcopy
 
 from utils.dataset_utils import DATASETS, load_dataset, get_transform, get_dataset_class_names
 from utils.dataset_classes import CIFAR10_taxonomy
-from models import TasksimModel, get_optimizer_lr_scheduler
+from models import TasksimModel, get_optimizer_lr_scheduler, PRETRAINED_MODELS
 from utils.utils import get_model_state_dict, get_full_results_dir, set_seed, save_results, save_model
 from utils.task2vec_utils import task2vec, cos_similarity
 from utils.tasksim_args import TaskSimArgs, parse_args
@@ -351,8 +351,22 @@ def run(args: TaskSimArgs):
 
     class_order = [i for i in range(train_dataset.num_classes)]
     rng = np.random.RandomState(seed=args.seed)
+    rng.shuffle(class_order)
+    # print(get_dataset_class_names(args.dataset, class_order))
+
+    model = TasksimModel(args.model, device, freeze_features=args.freeze_features,
+                            multihead=args.multihead, pretrained=args.pretrained, 
+                            nmc=args.head_type=='nmc', no_masking=args.no_masking).to(device)
+
+
+    print(model)
+    
+    if args.model in PRETRAINED_MODELS:
+        transform = model.transform
+    
     if args.dataset == 'tiny' and args.domain_inc:
-        dists = ["None"] + rng.choice(DOMAIN_INC_DISTS, replace=False, size=args.n_tasks-1).tolist()
+        dists = ["None"] + rng.choice(DOMAIN_INC_DISTS,
+                                      replace=False, size=args.n_tasks-1).tolist()
         train_scenario = TinyDomainIncScenario(
             train_dataset, list_perturbation=dists, list_severity=[1])
         test_scenario = TinyDomainIncScenario(
@@ -362,17 +376,16 @@ def run(args: TaskSimArgs):
             wandb.log({'distortions': str(dists)})
     else:
         rng.shuffle(class_order)
-        train_scenario = prepare_scenario(train_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
-        test_scenario = prepare_scenario(test_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
+        train_scenario = prepare_scenario(
+            train_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
+        test_scenario = prepare_scenario(
+            test_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
+    # train_scenario = prepare_scenario(train_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
+    # test_scenario = prepare_scenario(test_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
 
     print(f"Total number of classes: {train_scenario.nb_classes}.")
     print(f"Number of tasks: {args.n_tasks}.")
     print(class_order)
-    # print(get_dataset_class_names(args.dataset, class_order))
-
-    model = TasksimModel(args.model, device, freeze_features=args.freeze_features,
-                            multihead=args.multihead, pretrained=args.pretrained, 
-                            nmc=args.head_type=='nmc', no_masking=args.no_masking).to(device)
 
     replay_buff = None
     if args.replay_size_per_class != 0:
