@@ -9,7 +9,7 @@ metric:
   name: cl_acc
 parameters:
   dataset:
-    values: [tiny, cifar-100]
+    values: [tiny]
   model:
     values: [vgg, densenet, resnet]
   multihead:
@@ -51,5 +51,7 @@ parameters:
   no_masking:
     value: false
   metrics:
+    value: true
+  domain_inc:
     value: true
 program: main.py
