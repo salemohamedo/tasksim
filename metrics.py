@@ -49,6 +49,8 @@ def kl_mvn(m0, S0, m1, S1):
     N = m0.shape[0]
     return np.mean([kl_svn(m0[i], S0[i], m1[i], S1[i]) for i in range(N)])
 
+def sym_kl_mvn(m0, S0, m1, S1):
+    return (kl_mvn(m0, S0, m1, S1) + kl_mvn(m1, S1, m0, S0))/2
 
 def wass_mvn(m0, S0, m1, S1):
     def wass_svn(m0, S0, m1, S1):
@@ -145,7 +147,7 @@ def compute_metrics(model: TasksimModel, old_data_loader, new_data_loader):
     wass_dist = 0
     for i in old_metrics['class_stats'].keys():
         for j in new_metrics['class_stats'].keys():
-            kl_div += kl_mvn(
+            kl_div += sym_kl_mvn(
                 old_metrics['class_stats'][i]['mean'],
                 old_metrics['class_stats'][i]['cov'],
                 new_metrics['class_stats'][j]['mean'],

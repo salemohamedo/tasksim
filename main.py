@@ -357,9 +357,6 @@ def run(args: TaskSimArgs):
     model = TasksimModel(args.model, device, freeze_features=args.freeze_features,
                             multihead=args.multihead, pretrained=args.pretrained, 
                             nmc=args.head_type=='nmc', no_masking=args.no_masking).to(device)
-
-
-    print(model)
     
     if args.model in PRETRAINED_MODELS:
         transform = model.transform
@@ -380,8 +377,6 @@ def run(args: TaskSimArgs):
             train_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
         test_scenario = prepare_scenario(
             test_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
-    # train_scenario = prepare_scenario(train_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
-    # test_scenario = prepare_scenario(test_dataset, args.n_tasks, args.n_classes_per_task, transform, class_order, args.domain_inc)
 
     print(f"Total number of classes: {train_scenario.nb_classes}.")
     print(f"Number of tasks: {args.n_tasks}.")
@@ -431,13 +426,14 @@ def run(args: TaskSimArgs):
 if __name__ == '__main__':
     args = parse_args()
     args.dataset = 'tiny'
+    args.model = 'densenet'
     args.n_classes_per_task = 20
-    args.n_tasks = 2
+    args.n_tasks = 5
     # args.batch_size = 20
-    args.domain_inc = False
-    args.replay_size_per_class = -1
+    args.domain_inc = True
+    args.replay_size_per_class = 0
     args.num_epochs = 1
-    args.metrics = True
+    args.metrics = False
     # args.wandb = True
     # args.task2vec = False
     # args.task2vec_combined_head = True
