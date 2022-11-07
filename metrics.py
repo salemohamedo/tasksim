@@ -42,7 +42,7 @@ def kl_mvn(m0, S0, m1, S1):
 def compute_metrics(model: TasksimModel, old_data_loader, new_data_loader):
 
     oldX, old_prototypes = get_features(model, old_data_loader, max_num_samples=10000)
-    newX, new_prototypes = get_features(model, new_data_loader, max_num_sampless=10000)
+    newX, new_prototypes = get_features(model, new_data_loader, max_num_samples=10000)
 
     subspace_sim = subspace_overlap(oldX, newX, k=10, centered=True)
     prototypes_sim = calculate_cosine_similarity(old_prototypes, new_prototypes)
