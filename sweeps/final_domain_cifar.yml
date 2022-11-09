@@ -11,7 +11,7 @@ parameters:
   dataset:
     values: [cifar-100]
   model:
-    values: [vgg, densenet, resnet]
+    values: [densenet, resnet]
   multihead:
     value: false
   n_tasks:

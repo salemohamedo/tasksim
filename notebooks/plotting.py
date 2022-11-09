@@ -6,6 +6,7 @@ import seaborn as sns
 import itertools
 import numpy as np
 from pathlib import Path
+import copy
 sns.set()
 
 api = wandb.Api()
@@ -81,14 +82,17 @@ def combine_transfer_df(df, transfer_df):
 
 def load_results_df(metric_sweep_names, transfer_sweep_names):
     df = load_sweeps(metric_sweep_names)
-    transfer_df = load_sweeps(transfer_sweep_names)
-    df = combine_transfer_df(df, transfer_df)
+    if transfer_sweep_names:
+        transfer_df = load_sweeps(transfer_sweep_names)
+        df = combine_transfer_df(df, transfer_df)
     df['task_idx'] = [np.arange(4) + 1 for i in range(df.shape[0])]
 
     metrics = get_metrics(df)
 
     blowup_cols = ['all_cl_accs', 'all_fgts',
-                   'task_idx', 'all_transfers'] + metrics
+                   'task_idx'] + metrics
+    if transfer_sweep_names:
+        blowup_cols.append('all_transfers')
     metrics_df = df.explode(blowup_cols, ignore_index=True)
     for col in blowup_cols:
         metrics_df[col] = np.float64(metrics_df[col])
@@ -99,7 +103,7 @@ def get_metrics(df):
     return [c for c in df.columns if c.startswith('metric_')]
 
 
-def create_corr_df(df, sim_metrics, agg_cols=['model', 'dataset', 'n_classes_per_task'], idx=False):
+def create_corr_df(df, sim_metrics, agg_cols=['model', 'dataset', 'n_classes_per_task', 'domain_inc'], idx=False, perf_metrics=None):
     df = df.copy()
     if idx:
         agg_cols.append('task_idx')
@@ -109,13 +113,18 @@ def create_corr_df(df, sim_metrics, agg_cols=['model', 'dataset', 'n_classes_per
 
     corr_results = []
     combinations = dict_product({x: list(df[x].unique()) for x in agg_cols})
+    if not perf_metrics:
+        perf_metrics = ['all_cl_accs', 'all_fgts', 'all_transfers']
     for c in combinations:
         tmp_df = df.loc[(df[list(c)] ==
                          pd.Series(c)).all(axis=1)]
-        for i in ['all_cl_accs', 'all_fgts', 'all_transfers']:
+        for i in perf_metrics:
             for j in sim_metrics:
-                c[f'{i}_{j}'] = tmp_df[i].corr(tmp_df[j])
-        corr_results.append(c)
+                entry = copy.deepcopy(c)
+                entry['perf_metric'] = i
+                entry['sim_metric'] = j.removeprefix('metric_')
+                entry['corr_value'] = tmp_df[i].corr(tmp_df[j])
+                corr_results.append(entry)
     return pd.DataFrame(corr_results)
 
 
@@ -131,12 +140,19 @@ def create_corr_pivot_table(df, values='all_cl_accs_all_sims', index=['model', '
 
 ## Make Plots
 
-def plot_perf(df, x, hue, figsize=(20, 10), savefig=None):
-    fig, ax = plt.subplots(1, 4, figsize=figsize)
-    for i, y in enumerate(['mean_iid_acc', 'cl_acc', 'mean_fgt', 'mean_transfer']):
-        sns.barplot(data=df, x=x, y=y, hue=hue, ci='sd', ax=ax[i])
+def plot_perf(df, x, hue, figsize=(20, 10), savefig=None, transfer=True, domain_inc=False):
+    perf_df = df[df['domain_inc'] == domain_inc]
+    ys = ['mean_iid_acc', 'cl_acc', 'mean_fgt']
+    y_labels = ['IID Acc', 'CL Acc', 'Forgetting']
+    if transfer:
+        ys.append('mean_transfer')
+        y_labels.append('Transfer')
+    num_plots = len(ys)
+    fig, ax = plt.subplots(1, num_plots, figsize=figsize)
+    for i, y in enumerate(ys):
+        sns.barplot(data=perf_df, x=x, y=y, hue=hue, ci='sd', ax=ax[i])
         ax[i].set_ylim(0, 1)
-        ax[i].set_ylabel(['IID Acc', 'CL Acc', 'Forgetting', 'Transfer'][i])
+        ax[i].set_ylabel(y_labels[i])
     fig.tight_layout()
     if savefig:
         fig.savefig(savefig)

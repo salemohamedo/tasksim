@@ -1,0 +1,12 @@
+\begin{tabular}{llrrrrrrrrrr}
+\toprule
+       & \textbf{sim\_metric} &  all\_sims &  entropy\_ratio &  final\_sims &  kl\_div &  max\_logit\_ratio &  max\_prob\_ratio &  prototypes\_sim &  subspace\_overlap &  trace\_overlap &  wass\_dist \\
+\textbf{model} & \textbf{dataset} &           &                &             &         &                  &                 &                 &                   &                &            \\
+\midrule
+\multirow{2}{*}{\textbf{densenet}} & \textbf{cifar-100} &     -0.12 &          -0.12 &       -0.16 &    0.31 &            -0.01 &            0.01 &           -0.04 &             -0.04 &          -0.14 &       0.15 \\
+       & \textbf{tiny} &     -0.17 &          -0.19 &       -0.09 &    0.58 &             0.32 &            0.07 &           -0.32 &             -0.36 &          -0.40 &       0.13 \\
+\cline{1-12}
+\multirow{2}{*}{\textbf{resnet}} & \textbf{cifar-100} &     -0.20 &           0.06 &       -0.10 &    0.29 &            -0.13 &           -0.15 &           -0.36 &             -0.23 &          -0.12 &       0.08 \\
+       & \textbf{tiny} &      0.00 &          -0.28 &       -0.09 &    0.02 &             0.27 &            0.21 &           -0.20 &             -0.33 &          -0.30 &      -0.09 \\
+\bottomrule
+\end{tabular}

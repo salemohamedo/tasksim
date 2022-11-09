@@ -18,7 +18,7 @@ source ~/.virtualenvs/tasksim/bin/activate
 
 # 4. Launch your job, tell it to save the model in $SLURM_TMPDIR
 #    and look for the dataset into $SLURM_TMPDIR
-wandb agent clip_cl/CL-Similarity/uv2kvsoa
+wandb agent clip_cl/CL-Similarity/fooseueo
 
 # # 5. Copy whatever you want to save on $SCRATCH
 # cp $SLURM_TMPDIR/<to_save> /network/scratch/<u>/<username>/
