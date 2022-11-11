@@ -63,10 +63,11 @@ def combine_transfer_df(df, transfer_df):
             (transfer_df.dataset == df_row.dataset) &
             (transfer_df.n_classes_per_task == df_row.n_classes_per_task) &
             (transfer_df.model == df_row.model) &
-            (transfer_df.seed == df_row.seed)
+            (transfer_df.seed == df_row.seed) &
+            (transfer_df.domain_inc == df_row.domain_inc)
         ]
-        cl_iid_accs = df_row.iid_accs
-        init_iid_accs = df_init_row.iid_accs.values[0]
+        cl_iid_accs = df_row.all_iid_accs
+        init_iid_accs = df_init_row.all_iid_accs[0]
 
         if len(cl_iid_accs) != len(init_iid_accs):
             mean_transfer.append(0)

@@ -11,7 +11,7 @@ parameters:
   dataset:
     values: [tiny, cifar-100]
   model:
-    values: [vgg, densenet, resnet]
+    values: [densenet, resnet]
   multihead:
     value: false
   n_tasks:
@@ -51,6 +51,8 @@ parameters:
   task2vec_combined_head:
     values: [true]
   no_masking:
+    value: false
+  metrics:
     value: false
   # results_dir:
   #   value: set2
