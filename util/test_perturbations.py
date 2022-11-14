@@ -11,7 +11,7 @@ from continuum.datasets import _ContinuumDataset, CIFAR10, TinyImageNet200, Imag
 from continuum.scenarios import TransformationIncremental
 from continuum.tasks import TaskSet, TaskType
 
-from utils.utils_perturbations import gaussian_noise, shot_noise, impulse_noise, speckle_noise, gaussian_blur, glass_blur, \
+from util.utils_perturbations import gaussian_noise, shot_noise, impulse_noise, speckle_noise, gaussian_blur, glass_blur, \
     defocus_blur, motion_blur, zoom_blur, fog, frost, snow, spatter, contrast, brightness, saturate, elastic_transform
 
 

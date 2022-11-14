@@ -8,7 +8,7 @@ import numpy as np
 from typing import Tuple, List, Union
 
 from torchvision import transforms
-from utils.dataset_classes import CIFAR100_taxonomy, Car196_taxonomy, CIFAR10_taxonomy, CUB200_taxonomy
+from util.dataset_classes import CIFAR100_taxonomy, Car196_taxonomy, CIFAR10_taxonomy, CUB200_taxonomy
 import clip
 # from models import CLIP_MODEL_NAME_DICT
 CLIP_MODEL_NAME_DICT = {

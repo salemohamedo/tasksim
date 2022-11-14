@@ -6,8 +6,8 @@ import torch
 from torch.nn.functional import cosine_similarity
 from typing import List
 import math
-from utils.dataset_utils import DATASETS
-from utils.task2vec_utils import cos_similarity
+from util.dataset_utils import DATASETS
+from util.task2vec_utils import cos_similarity
 import json
 
 

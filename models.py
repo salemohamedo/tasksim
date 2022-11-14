@@ -4,11 +4,16 @@ import re
 import clip
 from pretrained_models.encoders import encoders, EncoderTuple, PreparedModel
 
-PRETRAINED_MODELS = ["resnet18", "resnet34", "resnet50", "resnet101", "resnet152", "RN50_clip", "RN101_clip", "RN50x4_clip", "RN50x16_clip", "ViT-B/32_clip", "ViT-B/16_clip", "ViT-L/14_clip",
-                         "RN50x64_clip", "ViT-B/32", "ViT-B/16", "tf_efficientnet_l2_ns_475", "deit_base_distilled_patch16_224", "resnet50_timm", "ssl_resnet50", "wrn", "resnetv2_50x1_bitm", 
-                         "resnetv2_50x1_bitm_in21k", "resnetv2_101x1_bitm_in21k", "resnetv2_101x3_bitm_in21k", "resnetv2_152x2_bitm_in21k", "resnetv2_152x4_bitm_in21k", 
-                         "resnetv2_50x1_bit_distilled", "resnetv2_152x2_bit_teacher", "resnetv2_152x2_bit_teacher_384", "dino_vits16", "dino_vits8", "dino_vitb16", "dino_vitb8", 
-                         "dino_vitb8_hf", "dino_resnet50", "swsl_resnext101_32x16d", "efficient_net_nosy_teacher", "efficient_net_nosy_teacher_b7", "efficient_net_nosy_teacher_b6"]
+# PRETRAINED_MODELS = ["resnet18", "resnet34", "resnet50", "resnet101", "resnet152", "RN50_clip", "RN101_clip", "RN50x4_clip", "RN50x16_clip", "ViT-B/32_clip", "ViT-B/16_clip", "ViT-L/14_clip",
+#                          "RN50x64_clip", "ViT-B/32", "ViT-B/16", "tf_efficientnet_l2_ns_475", "deit_base_distilled_patch16_224", "resnet50_timm", "ssl_resnet50", "wrn", "resnetv2_50x1_bitm", 
+#                          "resnetv2_50x1_bitm_in21k", "resnetv2_101x1_bitm_in21k", "resnetv2_101x3_bitm_in21k", "resnetv2_152x2_bitm_in21k", "resnetv2_152x4_bitm_in21k", 
+#                          "resnetv2_50x1_bit_distilled", "resnetv2_152x2_bit_teacher", "resnetv2_152x2_bit_teacher_384", "dino_vits16", "dino_vits8", "dino_vitb16", "dino_vitb8", 
+#                          "dino_vitb8_hf", "dino_resnet50", "swsl_resnext101_32x16d", "efficient_net_nosy_teacher", "efficient_net_nosy_teacher_b7", "efficient_net_nosy_teacher_b6"]
+
+
+PRETRAINED_MODELS = ["resnet18", "resnet34", "resnet50", "RN50_clip", "ViT-B/16_clip", "ViT-B/16", "tf_efficientnet_l2_ns_475", "deit_base_distilled_patch16_224", "ssl_resnet50", "wrn", "resnetv2_50x1_bitm", 
+                         "resnetv2_50x1_bitm_in21k", "resnetv2_50x1_bit_distilled", "resnetv2_152x2_bit_teacher", "dino_vits16", "dino_vitb16", "dino_resnet50", "swsl_resnext101_32x16d", "efficient_net_nosy_teacher"]
+
 
 CLIP_MODEL_NAME_DICT = {
     'resnet_clip' : 'RN50',
@@ -116,17 +121,6 @@ def get_feature_extractor(model, device, pretrained):
         latent_dim = list(full_model.heads.children())[-1].in_features
         feature_extractor = full_model.encoder
         flatten_features = True
-    elif "clip" in model:
-        if pretrained == False:
-            raise ValueError("All clip models are already pretrained!")
-        clip_model_name = CLIP_MODEL_NAME_DICT[model]
-        feature_extractor, clip_transforms = clip.load(clip_model_name, device=device)
-        image = clip_transforms(transforms.ToPILImage()(
-            torch.Tensor(torch.ones(3, 224, 224)))).unsqueeze(0).to(device)
-        feature_extractor.eval()
-        with torch.no_grad():
-            latent_dim = feature_extractor.encode_image(image).shape[1]
-        flatten_features = True
     elif model in PRETRAINED_MODELS:
         encoder_tuple = encoders[model]
         encoder = encoder_tuple.partial_encoder(device=device, input_shape=16,
@@ -143,13 +137,23 @@ def get_feature_extractor(model, device, pretrained):
         
         feature_extractor = encoder.encoder
         feature_extractor.to(device)
-        image = clip_transforms(transforms.ToPILImage()(
-            torch.Tensor(torch.ones(3, 224, 224)))).unsqueeze(0).to(device)
+        image = torch.Tensor(torch.ones(3, 224, 224)).unsqueeze(0).to(device)
         feature_extractor.eval()
         with torch.no_grad():
             latent_dim = feature_extractor(image).shape[1]
         flatten_features = True
-        return feature_extractor, latent_dim, flatten_features, transform, transform
+        return feature_extractor, latent_dim, flatten_features, transform
+    elif "clip" in model:
+        if pretrained == False:
+            raise ValueError("All clip models are already pretrained!")
+        clip_model_name = CLIP_MODEL_NAME_DICT[model]
+        feature_extractor, clip_transforms = clip.load(clip_model_name, device=device)
+        image = clip_transforms(transforms.ToPILImage()(
+            torch.Tensor(torch.ones(3, 224, 224)))).unsqueeze(0).to(device)
+        feature_extractor.eval()
+        with torch.no_grad():
+            latent_dim = feature_extractor.encode_image(image).shape[1]
+        flatten_features = True
 
     return feature_extractor, latent_dim, flatten_features
 
@@ -249,7 +253,7 @@ class TasksimModel(torch.nn.Module):
         ## Apply masking
         assert y is not None
         outs = self.__forward(x)
-        classes_mask = torch.eye(self.head_size).cuda().float()
+        classes_mask = torch.eye(self.head_size).to(self.device).float()
         label_unique = y.unique()
         ind_mask = classes_mask[label_unique].sum(0)
         full_mask = ind_mask.unsqueeze(0).repeat(outs.shape[0], 1)

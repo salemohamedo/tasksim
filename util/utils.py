@@ -6,7 +6,7 @@ import json
 import torch
 import random
 import torch
-from utils.tasksim_args import TaskSimArgs
+from util.tasksim_args import TaskSimArgs
 
 BASE_RESULTS_PATH = './results'
 

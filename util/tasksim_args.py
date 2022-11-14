@@ -1,8 +1,9 @@
 import hashlib
 from dataclasses import dataclass, fields, asdict
 from argparse import ArgumentParser
-from utils.dataset_utils import DATASETS
+from util.dataset_utils import DATASETS
 import json
+from models import PRETRAINED_MODELS
 
 MODELS = ['resnet', 'densenet', 'vgg', 'vit', 'resnet_clip', 'vit_clip']
 OPTIMS = ['adam', 'sgd']
@@ -64,7 +65,7 @@ class TaskSimArgs:
             assert self.mixup_type in ['task_data', 'noise']
         if self.multihead and (self.nmc or self.freeze_features):
             raise ValueError("Can't enable multihead and (freeze features/nmc)")
-        if self.model not in MODELS:
+        if self.model not in MODELS and self.model not in PRETRAINED_MODELS:
             raise ValueError(f"{self.model} not supported!")
         if self.dataset not in DATASETS.keys():
             raise ValueError(f"{self.dataset} not supported!")

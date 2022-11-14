@@ -11,14 +11,14 @@ import math
 import pandas as pd
 from copy import deepcopy
 
-from utils.dataset_utils import DATASETS, load_dataset, get_transform, get_dataset_class_names
-from utils.dataset_classes import CIFAR10_taxonomy
+from util.dataset_utils import DATASETS, load_dataset, get_transform, get_dataset_class_names
+from util.dataset_classes import CIFAR10_taxonomy
 from models import TasksimModel, get_optimizer_lr_scheduler, PRETRAINED_MODELS
-from utils.utils import get_model_state_dict, get_full_results_dir, set_seed, save_results, save_model
-from utils.task2vec_utils import task2vec, cos_similarity
-from utils.tasksim_args import TaskSimArgs, parse_args
-from utils.eval_utils import evaluate_results
-from utils.test_perturbations import TinyDomainIncScenario
+from util.utils import get_model_state_dict, get_full_results_dir, set_seed, save_results, save_model
+from util.task2vec_utils import task2vec, cos_similarity
+from util.tasksim_args import TaskSimArgs, parse_args
+from util.eval_utils import evaluate_results
+from util.test_perturbations import TinyDomainIncScenario
 from metrics import compute_metrics
 
 import wandb
@@ -347,7 +347,9 @@ def run(args: TaskSimArgs):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     train_dataset, test_dataset = load_dataset(args.dataset, args.domain_inc, args.n_classes_per_task)
-    transform = get_transform(args.dataset, args.model)
+
+    if args.model not in PRETRAINED_MODELS:
+        transform = get_transform(args.dataset, args.model)
 
     class_order = [i for i in range(train_dataset.num_classes)]
     rng = np.random.RandomState(seed=args.seed)
@@ -425,12 +427,12 @@ def run(args: TaskSimArgs):
 
 if __name__ == '__main__':
     args = parse_args()
-    # args.dataset = 'tiny'
-    # args.model = 'densenet'
+    # args.dataset = 'cifar-100'
+    # args.model = 'efficient_net_nosy_teacher'
     # args.n_classes_per_task = 20
     # args.n_tasks = 5
     # # args.batch_size = 20
-    # args.domain_inc = True
+    # # args.domain_inc = True
     # args.replay_size_per_class = -1
     # args.num_epochs = 1
     # args.metrics = True
