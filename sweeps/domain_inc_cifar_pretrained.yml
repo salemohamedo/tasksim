@@ -1,0 +1,59 @@
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - --wandb
+method: grid
+metric:
+  goal: maximize
+  name: cl_acc
+parameters:
+  dataset:
+    values: [cifar-100]
+  model:
+    values: ["resnet18", "resnet34", "resnet50", "ViT-B/16", "tf_efficientnet_l2_ns_475", "deit_base_distilled_patch16_224", "ssl_resnet50", "resnetv2_50x1_bitm", "resnetv2_50x1_bitm_in21k", "resnetv2_50x1_bit_distilled", "resnetv2_152x2_bit_teacher", "dino_vits16", "dino_vitb16", "dino_resnet50", "swsl_resnext101_32x16d", "efficient_net_nosy_teacher"]
+  multihead:
+    value: false
+  n_tasks:
+    value: 5  
+  n_classes_per_task:
+    values: [20]
+  head_type:
+    value: linear
+  num_epochs:
+    value: 50
+  patience:
+    value: -1
+  optim:
+    value: sgd  
+  lr:
+    value: 0.01
+  batch_size:
+    value: 128
+  task2vec_epochs:
+    value: 10
+  save_feature_extractor:
+    value: false
+  save_results:
+    value: false
+  replay_size_per_class:
+    values: [-1]
+  wandb:
+    value: true
+  seed:
+    values: [0, 1, 2]
+  sweep_overwrite:
+    value: false
+  task2vec:
+    value: true
+  task2vec_combined_head:
+    values: [true]
+  no_masking:
+    value: false
+  metrics:
+    value: true
+  freeze_features:
+    value: true
+  domain_inc:
+    value: true
+program: main.py
