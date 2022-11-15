@@ -1,0 +1,22 @@
+Failed: ViT-B/16
+I do not know what to do with layer LayerNorm((768,), eps=1e-12, elementwise_affine=True)
+Failed: tf_efficientnet_l2_ns_475
+I do not know what to do with layer Conv2dSame(3, 136, kernel_size=(3, 3), stride=(2, 2), bias=False)
+Failed: deit_base_distilled_patch16_224
+I do not know what to do with layer LayerNorm((768,), eps=1e-06, elementwise_affine=True)
+Failed: resnetv2_50x1_bitm
+I do not know what to do with layer StdConv2d(3, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+Failed: resnetv2_50x1_bitm_in21k
+I do not know what to do with layer StdConv2d(3, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+Failed: resnetv2_50x1_bit_distilled
+I do not know what to do with layer StdConv2d(3, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+Failed: resnetv2_152x2_bit_teacher
+I do not know what to do with layer StdConv2d(3, 128, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+Failed: dino_vits16
+I do not know what to do with layer LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+Failed: dino_vitb16
+I do not know what to do with layer LayerNorm((768,), eps=1e-06, elementwise_affine=True)
+Failed: swsl_resnext101_32x16d
+CUDA out of memory. Tried to allocate 18.00 GiB (GPU 0; 47.46 GiB total capacity; 36.72 GiB already allocated; 7.96 GiB free; 38.45 GiB reserved in total by PyTorch) If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.  See documentation for Memory Management and PYTORCH_CUDA_ALLOC_CONF
+Failed: efficient_net_nosy_teacher
+I do not know what to do with layer Conv2dSame(3, 32, kernel_size=(3, 3), stride=(2, 2), bias=False)

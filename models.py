@@ -13,7 +13,8 @@ from pretrained_models.encoders import encoders, EncoderTuple, PreparedModel
 
 PRETRAINED_MODELS = ["resnet18", "resnet34", "resnet50", "RN50_clip", "ViT-B/16_clip", "ViT-B/16", "tf_efficientnet_l2_ns_475", "deit_base_distilled_patch16_224", "ssl_resnet50", "wrn", "resnetv2_50x1_bitm", 
                          "resnetv2_50x1_bitm_in21k", "resnetv2_50x1_bit_distilled", "resnetv2_152x2_bit_teacher", "dino_vits16", "dino_vitb16", "dino_resnet50", "swsl_resnext101_32x16d", "efficient_net_nosy_teacher"]
-
+TASK2VEC_IGNORE_MODELS = ["RN50_clip", "ViT-B/16_clip", "ViT-B/16", "tf_efficientnet_l2_ns_475", "deit_base_distilled_patch16_224", "wrn", "resnetv2_50x1_bitm",
+                           "resnetv2_50x1_bitm_in21k", "resnetv2_50x1_bit_distilled", "resnetv2_152x2_bit_teacher", "dino_vits16", "dino_vitb16", "swsl_resnext101_32x16d", "efficient_net_nosy_teacher"]
 
 CLIP_MODEL_NAME_DICT = {
     'resnet_clip' : 'RN50',
@@ -167,6 +168,7 @@ class TasksimModel(torch.nn.Module):
             self.feature_extractor, self.fc_in_features, self.flatten_features = get_feature_extractor(
             model, device, pretrained)
         self.is_clip = True if "clip" in model else False
+        self.model_name = model
         self.classifier = None
         self.head_size = 0
         self.device = device

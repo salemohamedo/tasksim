@@ -7,6 +7,7 @@ from similarity_metrics.task2vec import Task2Vec, get_hessian, cosine, normalize
 import math
 import wandb
 from torch.nn.functional import cosine_similarity
+from pathlib import Path
 
 
 def fit_classifier_nmc(model: TasksimModel, data_loader):
@@ -120,6 +121,11 @@ def compute_task2vec(model: TasksimModel, dataloader, num_classes, type, next_ta
 def compute_fisher(model: TasksimModel, dataloader):  
     fim_diag: PMatDiag = FIM_MonteCarlo(model, dataloader, PMatDiag,
                              trials=1, device=model.device)
+    config_path = Path(f'./config/{model.model_name}.json')
+    if not config_path.exists():
+        import json
+        with open(config_path, 'w') as fp:
+            json.dump(fim_diag.generator.layer_collection.p_pos, fp)
     return fim_diag.get_diag()
     # # return torch.Tensor(get_hessian(Task2Vec(model).embed2(dataloader.dataset)))
     # task2vec = Task2Vec(model).embed2(dataloader.dataset)

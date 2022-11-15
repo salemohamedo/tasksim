@@ -13,7 +13,7 @@ from copy import deepcopy
 
 from util.dataset_utils import DATASETS, load_dataset, get_transform, get_dataset_class_names
 from util.dataset_classes import CIFAR10_taxonomy
-from models import TasksimModel, get_optimizer_lr_scheduler, PRETRAINED_MODELS
+from models import TasksimModel, get_optimizer_lr_scheduler, PRETRAINED_MODELS, TASK2VEC_IGNORE_MODELS
 from util.utils import get_model_state_dict, get_full_results_dir, set_seed, save_results, save_model
 from util.task2vec_utils import task2vec, cos_similarity
 from util.tasksim_args import TaskSimArgs, parse_args
@@ -166,7 +166,7 @@ def run_cl_sequence(args: TaskSimArgs, model: TasksimModel, train_scenario: Clas
             sim_metrics.append(compute_metrics(model, old_train_loader, new_task_train_loader))
 
         # Compute task2vec embedding
-        if args.task2vec and task_id > 0:
+        if args.task2vec and task_id > 0 and args.model not in TASK2VEC_IGNORE_MODELS:
             model.set_task2vec_mode(True)
             original_new_task_offset = train_taskset._y.min()
             train_taskset._y -= original_new_task_offset
@@ -429,15 +429,19 @@ if __name__ == '__main__':
     args = parse_args()
     # args.dataset = 'cifar-100'
     # args.model = 'efficient_net_nosy_teacher'
-    # args.n_classes_per_task = 20
-    # args.n_tasks = 5
-    # # args.batch_size = 20
-    # # args.domain_inc = True
-    # args.replay_size_per_class = -1
+    # args.n_classes_per_task = 2
+    # args.n_tasks = 2
+    # # # args.batch_size = 20
+    # # # args.domain_inc = True
+    # args.replay_size_per_class = 0
     # args.num_epochs = 1
     # args.metrics = True
-    # # args.wandb = True
-    # # args.task2vec = False
+    # args.freeze_features = True
+    # # # args.wandb = True
+    # args.task2vec = True
+    # args.task2vec_epochs = 1
     # # args.task2vec_combined_head = True
     # # torch.autograd.set_detect_anomaly(True)
     run(args)
+
+
