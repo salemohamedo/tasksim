@@ -93,3 +93,8 @@ wandb==0.12.16
 wrapt==1.14.1
 xxhash==3.0.0
 yarl==1.7.2
+clip==0.2.0
+timm==0.6.11
+transformers==4.24.0
+nngeometry==0.2.1
+wand==0.6.10
