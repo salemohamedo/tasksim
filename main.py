@@ -335,6 +335,9 @@ def run(args: TaskSimArgs):
 
         wandb.run.name = f'{args.get_run_id()}_{wandb.run.id}'
 
+    ## REMOVE ME
+    args.batch_size = 32
+    ## REMOVE ME
     print(args)
     args.validate_args()
 

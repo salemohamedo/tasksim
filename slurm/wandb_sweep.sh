@@ -1,9 +1,9 @@
 #!/bin/bash
 
-#SBATCH --partition=main                                 # Ask for unkillable job
+#SBATCH --partition=long                                 # Ask for unkillable job
 #SBATCH --cpus-per-task=4                                # Ask for 4 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=10G                                        # Ask for 10 GB of RAM
+#SBATCH --mem=32G                                        # Ask for 10 GB of RAM
 #SBATCH --time=72:00:00                                   # The job will run for 3 hours
 #SBATCH -o /network/scratch/o/omar.salemohamed/wandb-sweep-%j.out  # Write the log on scratch
 
