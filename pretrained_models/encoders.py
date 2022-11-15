@@ -77,7 +77,7 @@ def prepare_BIT_model_timm(name, pretrained=True, fix_batchnorms_encoder=True, m
         from timm.data.transforms_factory import create_transform
 
         model = timm.create_model(name, pretrained=True, num_classes=0)
-        print("encoder",model)
+        # print("encoder",model)
         model.to(device)
         config = resolve_data_config({}, model=model)
         transform = create_transform(**config)  
@@ -96,7 +96,7 @@ def prepare_model_timm(name, pretrained=True, fix_batchnorms_encoder=True, model
         from timm.data.transforms_factory import create_transform
 
         model = timm.create_model(name, pretrained=True, num_classes=0)
-        print("encoder",model)
+        # print("encoder",model)
         model.to(device)
         config = resolve_data_config({}, model=model)
         transform = create_transform(**config)       
