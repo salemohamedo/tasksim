@@ -11,7 +11,7 @@ parameters:
   dataset:
     values: [tiny]
   model:
-    values: [densenet, resnet]
+    values: ["resnet18", "resnet34", "resnet50", "ViT-B/16", "tf_efficientnet_l2_ns_475", "deit_base_distilled_patch16_224", "ssl_resnet50", "resnetv2_50x1_bitm", "resnetv2_50x1_bitm_in21k", "resnetv2_50x1_bit_distilled", "resnetv2_152x2_bit_teacher", "dino_vits16", "dino_vitb16", "dino_resnet50", "swsl_resnext101_32x16d", "efficient_net_nosy_teacher"]
   multihead:
     value: false
   n_tasks:
@@ -41,17 +41,21 @@ parameters:
   wandb:
     value: true
   seed:
-    values: [0, 1, 2, 3, 4]
+    values: [0, 1, 2]
   sweep_overwrite:
     value: false
   task2vec:
-    value: true
+    value: false
   task2vec_combined_head:
     values: [true]
   no_masking:
     value: false
   metrics:
+    value: false
+  freeze_features:
     value: true
   domain_inc:
+    value: true
+  init:
     value: true
 program: main.py

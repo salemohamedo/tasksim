@@ -122,6 +122,12 @@ def get_feature_extractor(model, device, pretrained):
         latent_dim = list(full_model.heads.children())[-1].in_features
         feature_extractor = full_model.encoder
         flatten_features = True
+    elif model == "efficientnet":
+        full_model = models.efficientnet_b0(pretrained=pretrained)
+        latent_dim = full_model.classifier[-1].in_features
+        full_model.classifier = full_model.classifier[:-1]
+        feature_extractor = full_model
+        flatten_features = True
     elif model in PRETRAINED_MODELS:
         encoder_tuple = encoders[model]
         encoder = encoder_tuple.partial_encoder(device=device, input_shape=16,

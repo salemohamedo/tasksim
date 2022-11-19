@@ -9,15 +9,15 @@ metric:
   name: cl_acc
 parameters:
   dataset:
-    values: [cifar-100]
+    values: [tiny, cifar-100]
   model:
-    values: [densenet, resnet]
+    values: [efficientnet]
   multihead:
     value: false
   n_tasks:
     value: 5  
   n_classes_per_task:
-    values: [20]
+    values: [2, 4, 10, 20]
   head_type:
     value: linear
   num_epochs:
@@ -40,6 +40,8 @@ parameters:
     values: [-1]
   wandb:
     value: true
+  init:
+    value: true
   seed:
     values: [0, 1, 2, 3, 4]
   sweep_overwrite:
@@ -50,10 +52,8 @@ parameters:
     values: [true]
   no_masking:
     value: false
-  domain_inc:
-    value: true
   metrics:
     value: false
-  init:
-    value: true
+  # results_dir:
+  #   value: set2
 program: main.py

@@ -11,7 +11,13 @@ sns.set()
 
 api = wandb.Api()
 METRICS = ['entropy_ratio', 'entropy_diff', 'max_prob_diff',
-                     'max_prob_ratio', 'max_logit_diff', 'max_logit_ratio', 'kl_div', 'all_sims']
+           'max_prob_ratio', 'max_logit_diff', 'max_logit_ratio', 'kl_div', 'all_sims']
+
+PRETRAINED_MODELS = ["resnet18", "resnet34", "resnet50", "RN50_clip", "ViT-B/16_clip", "ViT-B/16", "tf_efficientnet_l2_ns_475", "deit_base_distilled_patch16_224", "ssl_resnet50", "wrn", "resnetv2_50x1_bitm",
+                     "resnetv2_50x1_bitm_in21k", "resnetv2_50x1_bit_distilled", "resnetv2_152x2_bit_teacher", "dino_vits16", "dino_vitb16", "dino_resnet50", "swsl_resnext101_32x16d", "efficient_net_nosy_teacher"]
+TASK2VEC_IGNORE_MODELS = ["RN50_clip", "ViT-B/16_clip", "ViT-B/16", "tf_efficientnet_l2_ns_475", "deit_base_distilled_patch16_224", "wrn", "resnetv2_50x1_bitm",
+                          "resnetv2_50x1_bitm_in21k", "resnetv2_50x1_bit_distilled", "resnetv2_152x2_bit_teacher", "dino_vits16", "dino_vitb16", "swsl_resnext101_32x16d", "efficient_net_nosy_teacher"]
+
 
 def get_iid_accs(r):
     accs = []
@@ -52,7 +58,18 @@ def load_sweeps(sweeps, parse_iid=False):
            'replay_size_per_class'] = 'All samples'
     for m in METRICS:
         df = df.rename(columns={m: f'metric_{m}'})
+    df.loc[df['model'].isin(PRETRAINED_MODELS), 'pretrained'] = True
+    df = df.rename(columns={'metric_all_sims': 'metric_task2vec_all_layers',
+                   'metric_final_sims': 'metric_task2vec_final_layer'})
+    ## REMOVE ME
+    df = df[(df['all_cl_accs'].notna()) & (df['seed'] < 3)]
+    for c in df.columns:
+        if c.startswith('metric_') and np.isnan(df[c].str.len().unique()).any():
+            df[c] = df[c].apply(lambda d: d if isinstance(
+                d, list) else [-1, -1, -1, -1])
+    ## REMOVE ME
     return df
+
 
 def combine_transfer_df(df, transfer_df):
     mean_transfer = []
@@ -66,20 +83,27 @@ def combine_transfer_df(df, transfer_df):
             (transfer_df.seed == df_row.seed) &
             (transfer_df.domain_inc == df_row.domain_inc)
         ]
-        cl_iid_accs = df_row.all_iid_accs
-        init_iid_accs = df_init_row.all_iid_accs[0]
+        cl_iid_accs = np.array(df_row.all_iid_accs)
+        init_iid_accs = df_init_row.all_iid_accs.to_list()
 
-        if len(cl_iid_accs) != len(init_iid_accs):
-            mean_transfer.append(0)
-            all_transfers.append(np.zeros(4))
+        mean_cl_iid_acc = df_row['mean_iid_acc']
+        mean_init_iid_acc = df_init_row['mean_iid_acc'].to_list()
+        if len(init_iid_accs) == 0:
+            init_iid_accs = cl_iid_accs
         else:
-            mean_transfer.append(
-                (df_row['mean_iid_acc'] - df_init_row['mean_iid_acc']).values[0])
-            all_t = np.array(cl_iid_accs) - np.array(init_iid_accs)
-            all_transfers.append(all_t[1:]/100)
+            init_iid_accs = np.array(init_iid_accs[0])
+        if len(mean_init_iid_acc) == 0:
+            mean_init_iid_acc = mean_cl_iid_acc
+        else:
+            mean_init_iid_acc = mean_init_iid_acc[0]
+        # print(np.array(cl_iid_accs),np.array(init_iid_accs))
+        mean_transfer.append(mean_cl_iid_acc - mean_init_iid_acc)
+        all_t = np.array(cl_iid_accs) - np.array(init_iid_accs)
+        all_transfers.append(all_t[1:])
     df['mean_transfer'] = np.array(mean_transfer)
     df['all_transfers'] = all_transfers
     return df
+
 
 def load_results_df(metric_sweep_names, transfer_sweep_names):
     df = load_sweeps(metric_sweep_names)
@@ -97,14 +121,17 @@ def load_results_df(metric_sweep_names, transfer_sweep_names):
     metrics_df = df.explode(blowup_cols, ignore_index=True)
     for col in blowup_cols:
         metrics_df[col] = np.float64(metrics_df[col])
+    for m in metrics:
+        metrics_df[m] = (metrics_df[m] - metrics_df[m].min()) / \
+            (metrics_df[m].max() - metrics_df[m].min())
     return df, metrics_df
-    
+
 
 def get_metrics(df):
     return [c for c in df.columns if c.startswith('metric_')]
 
 
-def create_corr_df(df, sim_metrics, agg_cols=['model', 'dataset', 'n_classes_per_task', 'domain_inc'], idx=False, perf_metrics=None):
+def create_corr_df(df, sim_metrics, agg_cols=['model', 'dataset', 'n_classes_per_task', 'domain_inc', 'pretrained'], idx=False, perf_metrics=None):
     df = df.copy()
     if idx:
         agg_cols.append('task_idx')
@@ -126,7 +153,10 @@ def create_corr_df(df, sim_metrics, agg_cols=['model', 'dataset', 'n_classes_per
                 entry['sim_metric'] = j.removeprefix('metric_')
                 entry['corr_value'] = tmp_df[i].corr(tmp_df[j])
                 corr_results.append(entry)
-    return pd.DataFrame(corr_results)
+    corr_df = pd.DataFrame(corr_results)
+    corr_df = corr_df[corr_df['corr_value'].notna()]
+    return corr_df
+
 
 
 def create_corr_pivot_table(df, values='all_cl_accs_all_sims', index=['model', 'dataset'], columns=['n_classes_per_task'], savefig=None):

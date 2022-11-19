@@ -1,6 +1,0 @@
-Failed: RN50_clip
-'TorchModelWrapper' object has no attribute 'encode_image'
-Failed: ViT-B/16_clip
-'TorchModelWrapper' object has no attribute 'encode_image'
-Failed: wrn
-Size mismatch between tensors

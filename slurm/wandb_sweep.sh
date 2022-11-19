@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --partition=long                                 # Ask for unkillable job
+#SBATCH --partition=main                                 # Ask for unkillable job
 #SBATCH --cpus-per-task=4                                # Ask for 4 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
 #SBATCH --mem=32G                                        # Ask for 10 GB of RAM
@@ -18,7 +18,7 @@ source ~/.virtualenvs/tasksim/bin/activate
 
 # 4. Launch your job, tell it to save the model in $SLURM_TMPDIR
 #    and look for the dataset into $SLURM_TMPDIR
-wandb agent clip_cl/CL-Similarity/oxaule4c
+wandb agent clip_cl/CL-Similarity/9z8c4aih
 
 # # 5. Copy whatever you want to save on $SCRATCH
 # cp $SLURM_TMPDIR/<to_save> /network/scratch/<u>/<username>/

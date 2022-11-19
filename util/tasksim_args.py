@@ -5,7 +5,7 @@ from util.dataset_utils import DATASETS
 import json
 from models import PRETRAINED_MODELS
 
-MODELS = ['resnet', 'densenet', 'vgg', 'vit', 'resnet_clip', 'vit_clip']
+MODELS = ['resnet', 'densenet', 'vgg', 'vit', 'resnet_clip', 'vit_clip', 'efficientnet']
 OPTIMS = ['adam', 'sgd']
 
 @dataclass

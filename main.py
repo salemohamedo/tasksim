@@ -434,20 +434,20 @@ def run(args: TaskSimArgs):
 
 if __name__ == '__main__':
     args = parse_args()
-    # args.dataset = 'cifar-100'
-    # args.model = 'efficient_net_nosy_teacher'
-    # args.n_classes_per_task = 2
+    # args.dataset = 'tiny'
+    # args.model = 'efficientnet'
+    # args.n_classes_per_task = 4
     # args.n_tasks = 2
     # # # args.batch_size = 20
     # # # args.domain_inc = True
-    # args.replay_size_per_class = 0
+    # args.replay_size_per_class = -1
     # args.num_epochs = 1
-    # args.metrics = True
-    # args.freeze_features = True
+    # # args.metrics = True
+    # args.freeze_features = False
     # # # args.wandb = True
     # args.task2vec = True
     # args.task2vec_epochs = 1
-    # # args.task2vec_combined_head = True
+    # args.task2vec_combined_head = True
     # # torch.autograd.set_detect_anomaly(True)
     run(args)
 
