@@ -164,4 +164,3 @@ data/
 .vscode
 wandb/
 results/
-notebooks/
